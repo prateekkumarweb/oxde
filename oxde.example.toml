@@ -1,0 +1,6 @@
+data_dir = "./data"
+admin_username = "admin"
+admin_password = "change-me"
+
+# max_upload_bytes = 209715200
+# max_uncompressed_bytes = 1073741824

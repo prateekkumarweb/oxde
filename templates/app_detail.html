@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ app_name }}</h1>
+<p><a href="/apps/{{ app_name }}/">View live</a></p>
+
+<form method="post" action="/dashboard/apps/{{ app_name }}/delete" class="inline-form"
+      onsubmit="return confirm('Delete this app and all its deployments?');">
+  <button type="submit" class="danger">Delete app</button>
+</form>
+
+<h2>Upload new deployment</h2>
+<form method="post" action="/dashboard/apps/{{ app_name }}/deployments"
+      enctype="multipart/form-data" class="inline-form">
+  <input type="file" name="file" accept=".zip" required>
+  <button type="submit">Upload</button>
+</form>
+
+<h2>Deployments</h2>
+{% if deployments.is_empty() %}
+<p class="empty">No deployments yet.</p>
+{% else %}
+<table>
+<thead>
+<tr><th>ID</th><th>Created</th><th>Size</th><th></th></tr>
+</thead>
+<tbody>
+{% for d in deployments %}
+<tr>
+  <td>{{ d.id }}</td>
+  <td>{{ d.created_at }}</td>
+  <td>{{ d.upload_size_bytes }} bytes</td>
+  <td>
+    {% if d.is_active %}
+      <span class="badge">active</span>
+    {% else %}
+      <form method="post" action="/dashboard/apps/{{ app_name }}/deployments/{{ d.id }}/activate" class="inline-form">
+        <button type="submit">Activate</button>
+      </form>
+      <form method="post" action="/dashboard/apps/{{ app_name }}/deployments/{{ d.id }}/delete" class="inline-form"
+            onsubmit="return confirm('Delete this deployment?');">
+        <button type="submit" class="danger">Delete</button>
+      </form>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+{% endblock %}

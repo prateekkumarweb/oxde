@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Apps</h1>
+
+<form method="post" action="/dashboard/apps" class="inline-form">
+  <input type="text" name="name" placeholder="app-name" pattern="[a-z0-9-]+" required>
+  <button type="submit">Create app</button>
+</form>
+
+{% if apps.is_empty() %}
+<p class="empty">No apps yet.</p>
+{% else %}
+<ul class="apps-list">
+  {% for app in apps %}
+  <li>
+    <a href="/dashboard/apps/{{ app.name }}">{{ app.name }}</a>
+    {% match app.active_deployment_id %}
+      {% when Some with (id) %}
+        <span class="badge">live: {{ id }}</span>
+      {% when None %}
+        <span class="badge muted">no active deployment</span>
+    {% endmatch %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

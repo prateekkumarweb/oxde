@@ -1,0 +1,188 @@
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, Multipart, Path, State},
+    http::StatusCode,
+    routing::{delete, get, post},
+};
+use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
+
+use crate::{
+    error::{AppError, AppResult},
+    models::Deployment,
+    state::AppState,
+    storage,
+};
+
+pub fn router(max_upload_bytes: u64) -> Router<AppState> {
+    Router::new()
+        .route("/apps", get(list_apps).post(create_app))
+        .route("/apps/{name}", get(get_app).delete(delete_app))
+        .route(
+            "/apps/{name}/deployments",
+            post(create_deployment)
+                .layer(DefaultBodyLimit::max(usize_from_u64(max_upload_bytes)))
+                .get(list_deployments),
+        )
+        .route("/apps/{name}/deployments/{id}", delete(delete_deployment))
+        .route(
+            "/apps/{name}/deployments/{id}/activate",
+            post(activate_deployment),
+        )
+}
+
+/// `App` plus the currently active deployment id, derived at read time from
+/// the `active` symlink rather than stored in `app.json`.
+#[derive(Serialize)]
+pub struct AppView {
+    pub(crate) name: String,
+    pub(crate) created_at: jiff::Timestamp,
+    pub(crate) active_deployment_id: Option<String>,
+}
+
+pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
+    let active_deployment_id = storage::active_deployment_id(state, &app.name);
+    AppView {
+        name: app.name,
+        created_at: app.created_at,
+        active_deployment_id,
+    }
+}
+
+pub fn usize_from_u64(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+#[derive(Deserialize)]
+struct CreateAppRequest {
+    name: String,
+}
+
+async fn list_apps(State(state): State<AppState>) -> AppResult<Json<Vec<AppView>>> {
+    let views = storage::list_apps(&state)?
+        .into_iter()
+        .map(|app| app_view(&state, app))
+        .collect();
+    Ok(Json(views))
+}
+
+async fn create_app(
+    State(state): State<AppState>,
+    Json(body): Json<CreateAppRequest>,
+) -> AppResult<(StatusCode, Json<AppView>)> {
+    let app = storage::create_app(&state, &body.name)?;
+    Ok((StatusCode::CREATED, Json(app_view(&state, app))))
+}
+
+async fn get_app(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> AppResult<Json<AppView>> {
+    let app = storage::get_app(&state, &name)?;
+    Ok(Json(app_view(&state, app)))
+}
+
+async fn delete_app(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> AppResult<StatusCode> {
+    storage::delete_app(&state, &name)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn create_deployment(
+    State(state): State<AppState>,
+    Path(app_name): Path<String>,
+    mut multipart: Multipart,
+) -> AppResult<(StatusCode, Json<Deployment>)> {
+    let deployment = upload_deployment(&state, &app_name, &mut multipart).await?;
+    Ok((StatusCode::CREATED, Json(deployment)))
+}
+
+pub async fn upload_deployment(
+    state: &AppState,
+    app_name: &str,
+    multipart: &mut Multipart,
+) -> AppResult<Deployment> {
+    let zip_path = state.unique_tmp_path("upload").with_extension("zip");
+    let upload = stream_upload_to_disk(state, &zip_path, multipart).await;
+
+    let (original_filename, upload_size_bytes) = match upload {
+        Ok(fields) => fields,
+        Err(err) => {
+            tokio::fs::remove_file(&zip_path).await.ok();
+            return Err(err);
+        }
+    };
+
+    // Extraction is CPU/disk-bound and the `zip` crate's API is synchronous,
+    // so it runs on a blocking thread rather than tying up the async runtime.
+    let blocking_state = state.clone();
+    let blocking_zip_path = zip_path.clone();
+    let app_name = app_name.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        storage::create_deployment(
+            &blocking_state,
+            &app_name,
+            &blocking_zip_path,
+            original_filename,
+            upload_size_bytes,
+        )
+    })
+    .await
+    .map_err(|err| AppError::Io(std::io::Error::other(err.to_string())))?;
+
+    tokio::fs::remove_file(&zip_path).await.ok();
+    result
+}
+
+async fn list_deployments(
+    State(state): State<AppState>,
+    Path(app_name): Path<String>,
+) -> AppResult<Json<Vec<Deployment>>> {
+    Ok(Json(storage::list_deployments(&state, &app_name)?))
+}
+
+async fn activate_deployment(
+    State(state): State<AppState>,
+    Path((app_name, id)): Path<(String, String)>,
+) -> AppResult<StatusCode> {
+    storage::activate_deployment(&state, &app_name, &id)?;
+    Ok(StatusCode::OK)
+}
+
+async fn delete_deployment(
+    State(state): State<AppState>,
+    Path((app_name, id)): Path<(String, String)>,
+) -> AppResult<StatusCode> {
+    storage::delete_deployment(&state, &app_name, &id)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stream_upload_to_disk(
+    state: &AppState,
+    zip_path: &std::path::Path,
+    multipart: &mut Multipart,
+) -> AppResult<(Option<String>, u64)> {
+    while let Some(mut field) = multipart.next_field().await? {
+        if field.name() != Some("file") {
+            continue;
+        }
+
+        let original_filename = field.file_name().map(str::to_string);
+        let mut out = tokio::fs::File::create(zip_path).await?;
+        let mut total: u64 = 0;
+
+        while let Some(chunk) = field.chunk().await? {
+            total += chunk.len() as u64;
+            if total > state.max_upload_bytes() {
+                return Err(AppError::TooLarge);
+            }
+            out.write_all(&chunk).await?;
+        }
+
+        return Ok((original_filename, total));
+    }
+
+    Err(AppError::MissingUploadFile)
+}
