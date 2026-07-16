@@ -1,12 +1,15 @@
 use askama::Template;
-use axum::{Router, response::Response, routing::get};
-use tower_http::{trace::TraceLayer, validate_request::ValidateRequestHeaderLayer};
+use axum::{Router, middleware, response::Response, routing::get};
+use tower_http::{
+    services::ServeDir, trace::TraceLayer, validate_request::ValidateRequestHeaderLayer,
+};
 
 use crate::{auth::BasicAuth, error::AppResult, state::AppState};
 
 pub mod api;
 pub mod apps;
 pub mod dashboard;
+mod host_routing;
 
 pub fn build_router(state: AppState, admin_username: &str, admin_password: &str) -> Router {
     let protected = Router::new()
@@ -20,8 +23,12 @@ pub fn build_router(state: AppState, admin_username: &str, admin_password: &str)
     Router::new()
         .merge(protected)
         .route("/", get(index))
-        .nest("/apps", apps::router())
-        .with_state(state)
+        .nest_service("/static", ServeDir::new("static"))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state,
+            host_routing::dispatch_by_host,
+        ))
         .layer(TraceLayer::new_for_http())
 }
 

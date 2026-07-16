@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         config.data_dir.clone(),
         config.max_upload_bytes,
         config.max_uncompressed_bytes,
+        config.base_domain.clone(),
     );
 
     std::fs::create_dir_all(state.apps_dir()).with_context(|| {

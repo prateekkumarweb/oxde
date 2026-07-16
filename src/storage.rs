@@ -247,7 +247,7 @@ mod tests {
         ));
         std::fs::create_dir_all(dir.join("apps")).expect("create apps dir");
         std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
-        AppState::new(dir, 10_000, 10_000)
+        AppState::new(dir, 10_000, 10_000, "localhost".to_string())
     }
 
     fn tiny_zip(content: &[u8]) -> Vec<u8> {

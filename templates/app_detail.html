@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ app_name }}</h1>
-<p><a href="/apps/{{ app_name }}/">View live</a></p>
+<p>Live at: <a href="http://{{ app_host }}/" target="_blank" rel="noopener">{{ app_host }}</a></p>
 
 <form method="post" action="/dashboard/apps/{{ app_name }}/delete" class="inline-form"
       onsubmit="return confirm('Delete this app and all its deployments?');">

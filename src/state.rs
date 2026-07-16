@@ -17,10 +17,16 @@ struct Inner {
     id_seq: AtomicU64,
     max_upload_bytes: u64,
     max_uncompressed_bytes: u64,
+    base_domain: String,
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf, max_upload_bytes: u64, max_uncompressed_bytes: u64) -> Self {
+    pub fn new(
+        data_dir: PathBuf,
+        max_upload_bytes: u64,
+        max_uncompressed_bytes: u64,
+        base_domain: String,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 data_dir,
@@ -28,6 +34,7 @@ impl AppState {
                 id_seq: AtomicU64::new(0),
                 max_upload_bytes,
                 max_uncompressed_bytes,
+                base_domain,
             }),
         }
     }
@@ -38,6 +45,10 @@ impl AppState {
 
     pub fn max_uncompressed_bytes(&self) -> u64 {
         self.inner.max_uncompressed_bytes
+    }
+
+    pub fn base_domain(&self) -> &str {
+        &self.inner.base_domain
     }
 
     pub fn apps_dir(&self) -> PathBuf {

@@ -18,8 +18,8 @@ pub struct Deployment {
     pub upload_size_bytes: u64,
 }
 
-/// Slugs double as directory names and `/apps/<name>/...` URL segments, so
-/// they're restricted to what's safe in both places.
+/// Slugs double as directory names and `<name>.<base_domain>` subdomain
+/// labels, so they're restricted to what's safe in both places.
 pub fn validate_slug(name: &str) -> AppResult<()> {
     let valid = !name.is_empty()
         && name.len() <= 63

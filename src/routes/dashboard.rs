@@ -2,7 +2,7 @@ use askama::Template;
 use axum::{
     Router,
     extract::{DefaultBodyLimit, Form, Multipart, Path, State},
-    http::header,
+    http::{HeaderMap, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
@@ -15,7 +15,6 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
         .route("/", get(apps_list_page))
         .route("/apps", post(create_app_action))
-        .route("/style.css", get(style_css))
         .route("/apps/{name}", get(app_detail_page))
         .route("/apps/{name}/delete", post(delete_app_action))
         .route(
@@ -31,13 +30,6 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
             "/apps/{name}/deployments/{id}/delete",
             post(delete_deployment_action),
         )
-}
-
-async fn style_css() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../../static/style.css"),
-    )
 }
 
 pub(super) fn render(template: impl Template) -> AppResult<Response> {
@@ -83,12 +75,14 @@ struct DeploymentRow {
 #[template(path = "app_detail.html")]
 struct AppDetailTemplate {
     app_name: String,
+    app_host: String,
     deployments: Vec<DeploymentRow>,
 }
 
 async fn app_detail_page(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
+    headers: HeaderMap,
 ) -> AppResult<Response> {
     storage::get_app(&state, &app_name)?;
     let active_id = storage::active_deployment_id(&state, &app_name);
@@ -101,8 +95,15 @@ async fn app_detail_page(
             upload_size_bytes: d.upload_size_bytes,
         })
         .collect();
+    // Dashboard's own Host header already carries the right port for the link.
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_else(|| state.base_domain());
+    let app_host = format!("{app_name}.{host}");
     render(AppDetailTemplate {
         app_name,
+        app_host,
         deployments,
     })
 }

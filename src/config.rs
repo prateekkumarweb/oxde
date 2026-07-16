@@ -8,6 +8,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub admin_username: String,
     pub admin_password: String,
+    pub base_domain: String,
     #[serde(default = "default_max_upload_bytes")]
     pub max_upload_bytes: u64,
     #[serde(default = "default_max_uncompressed_bytes")]
