@@ -8,8 +8,13 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::api::{AppView, app_view, upload_deployment, usize_from_u64};
-use crate::{error::AppResult, state::AppState, storage};
+use super::api::{AppView, app_view, deploy_from_git, upload_deployment, usize_from_u64};
+use crate::{
+    error::AppResult,
+    models::{AppSource, GitSource},
+    state::AppState,
+    storage,
+};
 
 pub fn router(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
@@ -22,6 +27,7 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
             post(upload_deployment_action)
                 .layer(DefaultBodyLimit::max(usize_from_u64(max_upload_bytes))),
         )
+        .route("/apps/{name}/deployments/git", post(deploy_git_action))
         .route(
             "/apps/{name}/deployments/{id}/activate",
             post(activate_deployment_action),
@@ -51,16 +57,40 @@ async fn apps_list_page(State(state): State<AppState>) -> AppResult<Response> {
     render(AppsListTemplate { apps })
 }
 
+/// `axum::Form` (urlencoded) doesn't map onto a tagged enum the way JSON
+/// does, so this stays flat and gets assembled into an `AppSource` by hand.
 #[derive(Deserialize)]
 struct CreateAppForm {
     name: String,
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    repo_url: String,
+    #[serde(default)]
+    branch: String,
+    #[serde(default)]
+    publish_dir: String,
 }
 
 async fn create_app_action(
     State(state): State<AppState>,
     Form(form): Form<CreateAppForm>,
 ) -> AppResult<Redirect> {
-    storage::create_app(&state, &form.name)?;
+    let source = if form.source == "git" {
+        let branch = if form.branch.trim().is_empty() {
+            "main".to_string()
+        } else {
+            form.branch
+        };
+        AppSource::Git(GitSource {
+            repo_url: form.repo_url,
+            branch,
+            publish_dir: (!form.publish_dir.is_empty()).then_some(form.publish_dir),
+        })
+    } else {
+        AppSource::Upload
+    };
+    storage::create_app(&state, &form.name, source)?;
     Ok(Redirect::to("/dashboard"))
 }
 
@@ -69,6 +99,7 @@ struct DeploymentRow {
     created_at: jiff::Timestamp,
     upload_size_bytes: u64,
     is_active: bool,
+    commit_sha: Option<String>,
 }
 
 #[derive(Template)]
@@ -76,6 +107,7 @@ struct DeploymentRow {
 struct AppDetailTemplate {
     app_name: String,
     app_host: String,
+    git_source: Option<GitSource>,
     deployments: Vec<DeploymentRow>,
 }
 
@@ -84,7 +116,11 @@ async fn app_detail_page(
     Path(app_name): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    storage::get_app(&state, &app_name)?;
+    let app = storage::get_app(&state, &app_name)?;
+    let git_source = match app.source {
+        AppSource::Git(git_source) => Some(git_source),
+        AppSource::Upload => None,
+    };
     let active_id = storage::active_deployment_id(&state, &app_name);
     let deployments = storage::list_deployments(&state, &app_name)?
         .into_iter()
@@ -93,6 +129,7 @@ async fn app_detail_page(
             id: d.id,
             created_at: d.created_at,
             upload_size_bytes: d.upload_size_bytes,
+            commit_sha: d.git.map(|git| git.commit_sha),
         })
         .collect();
     // Dashboard's own Host header already carries the right port for the link.
@@ -104,6 +141,7 @@ async fn app_detail_page(
     render(AppDetailTemplate {
         app_name,
         app_host,
+        git_source,
         deployments,
     })
 }
@@ -122,6 +160,14 @@ async fn upload_deployment_action(
     mut multipart: Multipart,
 ) -> AppResult<Redirect> {
     upload_deployment(&state, &app_name, &mut multipart).await?;
+    Ok(Redirect::to(&format!("/dashboard/apps/{app_name}")))
+}
+
+async fn deploy_git_action(
+    State(state): State<AppState>,
+    Path(app_name): Path<String>,
+) -> AppResult<Redirect> {
+    deploy_from_git(&state, &app_name).await?;
     Ok(Redirect::to(&format!("/dashboard/apps/{app_name}")))
 }
 

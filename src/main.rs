@@ -5,6 +5,7 @@
 mod auth;
 mod config;
 mod error;
+mod git_fetch;
 mod models;
 mod routes;
 mod state;
@@ -25,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
         config.max_upload_bytes,
         config.max_uncompressed_bytes,
         config.base_domain.clone(),
+        config.git_fetch_timeout_secs,
     );
 
     std::fs::create_dir_all(state.apps_dir()).with_context(|| {

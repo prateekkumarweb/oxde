@@ -4,6 +4,13 @@
 
 <form method="post" action="/dashboard/apps" class="inline-form">
   <input type="text" name="name" placeholder="app-name" pattern="[a-z0-9-]+" required>
+  <select name="source">
+    <option value="upload">Upload zip</option>
+    <option value="git">Git repo</option>
+  </select>
+  <input type="text" name="repo_url" placeholder="https://github.com/user/repo.git">
+  <input type="text" name="branch" placeholder="branch (e.g. main)">
+  <input type="text" name="publish_dir" placeholder="publish dir (optional)">
   <button type="submit">Create app</button>
 </form>
 
@@ -19,6 +26,11 @@
         <span class="badge">live: {{ id }}</span>
       {% when None %}
         <span class="badge muted">no active deployment</span>
+    {% endmatch %}
+    {% match app.source %}
+      {% when AppSource::Git with (_) %}
+        <span class="badge muted">git</span>
+      {% when AppSource::Upload %}
     {% endmatch %}
   </li>
   {% endfor %}

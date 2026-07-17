@@ -13,6 +13,8 @@ pub struct Config {
     pub max_upload_bytes: u64,
     #[serde(default = "default_max_uncompressed_bytes")]
     pub max_uncompressed_bytes: u64,
+    #[serde(default = "default_git_fetch_timeout_secs")]
+    pub git_fetch_timeout_secs: u64,
 }
 
 const fn default_max_upload_bytes() -> u64 {
@@ -21,6 +23,10 @@ const fn default_max_upload_bytes() -> u64 {
 
 const fn default_max_uncompressed_bytes() -> u64 {
     1024 * 1024 * 1024
+}
+
+const fn default_git_fetch_timeout_secs() -> u64 {
+    60
 }
 
 impl Config {

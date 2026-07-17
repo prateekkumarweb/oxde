@@ -8,12 +8,21 @@
   <button type="submit" class="danger">Delete app</button>
 </form>
 
+{% match git_source %}
+{% when Some with (git) %}
+<h2>Git source</h2>
+<p>Repo: {{ git.repo_url }} (branch: {{ git.branch }})</p>
+<form method="post" action="/dashboard/apps/{{ app_name }}/deployments/git" class="inline-form">
+  <button type="submit">Pull latest &amp; deploy</button>
+</form>
+{% when None %}
 <h2>Upload new deployment</h2>
 <form method="post" action="/dashboard/apps/{{ app_name }}/deployments"
       enctype="multipart/form-data" class="inline-form">
   <input type="file" name="file" accept=".zip" required>
   <button type="submit">Upload</button>
 </form>
+{% endmatch %}
 
 <h2>Deployments</h2>
 {% if deployments.is_empty() %}
@@ -21,7 +30,7 @@
 {% else %}
 <table>
 <thead>
-<tr><th>ID</th><th>Created</th><th>Size</th><th></th></tr>
+<tr><th>ID</th><th>Created</th><th>Size</th><th>Commit</th><th></th></tr>
 </thead>
 <tbody>
 {% for d in deployments %}
@@ -29,6 +38,12 @@
   <td>{{ d.id }}</td>
   <td>{{ d.created_at }}</td>
   <td>{{ d.upload_size_bytes }} bytes</td>
+  <td>
+    {% match d.commit_sha %}
+      {% when Some with (sha) %}{{ sha }}
+      {% when None %}&mdash;
+    {% endmatch %}
+  </td>
   <td>
     {% if d.is_active %}
       <span class="badge">active</span>

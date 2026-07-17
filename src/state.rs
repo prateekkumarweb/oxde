@@ -18,6 +18,7 @@ struct Inner {
     max_upload_bytes: u64,
     max_uncompressed_bytes: u64,
     base_domain: String,
+    git_fetch_timeout_secs: u64,
 }
 
 impl AppState {
@@ -26,6 +27,7 @@ impl AppState {
         max_upload_bytes: u64,
         max_uncompressed_bytes: u64,
         base_domain: String,
+        git_fetch_timeout_secs: u64,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -35,6 +37,7 @@ impl AppState {
                 max_upload_bytes,
                 max_uncompressed_bytes,
                 base_domain,
+                git_fetch_timeout_secs,
             }),
         }
     }
@@ -49,6 +52,10 @@ impl AppState {
 
     pub fn base_domain(&self) -> &str {
         &self.inner.base_domain
+    }
+
+    pub fn git_fetch_timeout_secs(&self) -> u64 {
+        self.inner.git_fetch_timeout_secs
     }
 
     pub fn apps_dir(&self) -> PathBuf {

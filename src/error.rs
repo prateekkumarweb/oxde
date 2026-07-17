@@ -15,6 +15,14 @@ pub enum AppError {
     DeleteActiveDeployment,
     #[error("invalid name: {0}")]
     InvalidName(String),
+    #[error("invalid repo url: {0}")]
+    InvalidRepoUrl(String),
+    #[error("app {0} is not git-sourced")]
+    NotGitSourced(String),
+    #[error("invalid publish dir: {0}")]
+    InvalidPublishDir(String),
+    #[error("git fetch failed: {0}")]
+    Git(String),
     #[error("upload too large")]
     TooLarge,
     #[error("missing 'file' field in upload")]
@@ -36,8 +44,13 @@ impl IntoResponse for AppError {
         let status = match &self {
             Self::AppNotFound(_) | Self::DeploymentNotFound(_) => StatusCode::NOT_FOUND,
             Self::AppAlreadyExists(_) | Self::DeleteActiveDeployment => StatusCode::CONFLICT,
-            Self::InvalidName(_) | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
+            Self::InvalidName(_)
+            | Self::InvalidRepoUrl(_)
+            | Self::NotGitSourced(_)
+            | Self::InvalidPublishDir(_)
+            | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Git(_) => StatusCode::BAD_GATEWAY,
             Self::Zip(_) | Self::Template(_) | Self::Multipart(_) | Self::Io(_) | Self::Json(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }

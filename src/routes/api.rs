@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, State},
@@ -9,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::{
     error::{AppError, AppResult},
-    models::Deployment,
+    models::{AppSource, Deployment},
     state::AppState,
     storage,
 };
@@ -29,6 +31,10 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
             "/apps/{name}/deployments/{id}/activate",
             post(activate_deployment),
         )
+        .route(
+            "/apps/{name}/deployments/git",
+            post(create_git_deployment_endpoint),
+        )
 }
 
 /// `App` plus the currently active deployment id, derived at read time from
@@ -38,6 +44,7 @@ pub struct AppView {
     pub(crate) name: String,
     pub(crate) created_at: jiff::Timestamp,
     pub(crate) active_deployment_id: Option<String>,
+    pub(crate) source: AppSource,
 }
 
 pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
@@ -46,6 +53,7 @@ pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
         name: app.name,
         created_at: app.created_at,
         active_deployment_id,
+        source: app.source,
     }
 }
 
@@ -56,6 +64,8 @@ pub fn usize_from_u64(value: u64) -> usize {
 #[derive(Deserialize)]
 struct CreateAppRequest {
     name: String,
+    #[serde(default)]
+    source: AppSource,
 }
 
 async fn list_apps(State(state): State<AppState>) -> AppResult<Json<Vec<AppView>>> {
@@ -70,7 +80,7 @@ async fn create_app(
     State(state): State<AppState>,
     Json(body): Json<CreateAppRequest>,
 ) -> AppResult<(StatusCode, Json<AppView>)> {
-    let app = storage::create_app(&state, &body.name)?;
+    let app = storage::create_app(&state, &body.name, body.source)?;
     Ok((StatusCode::CREATED, Json(app_view(&state, app))))
 }
 
@@ -97,6 +107,33 @@ async fn create_deployment(
 ) -> AppResult<(StatusCode, Json<Deployment>)> {
     let deployment = upload_deployment(&state, &app_name, &mut multipart).await?;
     Ok((StatusCode::CREATED, Json(deployment)))
+}
+
+async fn create_git_deployment_endpoint(
+    State(state): State<AppState>,
+    Path(app_name): Path<String>,
+) -> AppResult<(StatusCode, Json<Deployment>)> {
+    let deployment = deploy_from_git(&state, &app_name).await?;
+    Ok((StatusCode::CREATED, Json(deployment)))
+}
+
+/// Runs the (blocking, network-bound) git fetch on a blocking thread, bounded
+/// by `git_fetch_timeout_secs` so a stalled fetch can't hang the request
+/// forever. Shared by the API and dashboard routes.
+pub async fn deploy_from_git(state: &AppState, app_name: &str) -> AppResult<Deployment> {
+    let blocking_state = state.clone();
+    let blocking_app_name = app_name.to_string();
+    let timeout = Duration::from_secs(state.git_fetch_timeout_secs());
+
+    let join_handle = tokio::task::spawn_blocking(move || {
+        storage::create_git_deployment(&blocking_state, &blocking_app_name)
+    });
+
+    match tokio::time::timeout(timeout, join_handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => Err(AppError::Io(std::io::Error::other(err.to_string()))),
+        Err(_) => Err(AppError::Git("timed out waiting for git fetch".to_string())),
+    }
 }
 
 pub async fn upload_deployment(
