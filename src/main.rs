@@ -5,6 +5,7 @@
 mod auth;
 mod config;
 mod containers;
+mod dashboard_assets;
 mod error;
 mod git_fetch;
 mod models;

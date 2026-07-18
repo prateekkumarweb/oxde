@@ -24,6 +24,9 @@ pub fn create_app(state: &AppState, name: &str, source: AppSource) -> AppResult<
     models::validate_slug(name)?;
     if let AppSource::Git(ref git_source) = source {
         models::validate_repo_url(&git_source.repo_url)?;
+        if let Some(run) = &git_source.run {
+            models::validate_run_config(run)?;
+        }
     }
 
     let staging = state.unique_tmp_path("create-app");

@@ -78,6 +78,20 @@ pub fn validate_repo_url(repo_url: &str) -> AppResult<()> {
     }
 }
 
+pub fn validate_run_config(run: &RunConfig) -> AppResult<()> {
+    if run.container_port == 0 {
+        return Err(AppError::InvalidRunConfig(
+            "container port must be 1-65535".to_string(),
+        ));
+    }
+    if run.start_command.trim().is_empty() {
+        return Err(AppError::InvalidRunConfig(
+            "start command is required in run mode".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deployment {
     pub id: String,

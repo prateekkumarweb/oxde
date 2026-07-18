@@ -35,8 +35,6 @@ pub enum AppError {
     MissingUploadFile,
     #[error("zip error: {0}")]
     Zip(#[from] zip::result::ZipError),
-    #[error("template error: {0}")]
-    Template(#[from] askama::Error),
     #[error(transparent)]
     Multipart(#[from] axum::extract::multipart::MultipartError),
     #[error(transparent)]
@@ -60,7 +58,7 @@ impl IntoResponse for AppError {
             Self::Git(_) | Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
                 StatusCode::BAD_GATEWAY
             }
-            Self::Zip(_) | Self::Template(_) | Self::Multipart(_) | Self::Io(_) | Self::Json(_) => {
+            Self::Zip(_) | Self::Multipart(_) | Self::Io(_) | Self::Json(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
