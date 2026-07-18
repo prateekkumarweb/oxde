@@ -372,7 +372,17 @@ mod tests {
             10_000,
             "localhost".to_string(),
             60,
-            crate::containers::connect().expect("build podman client"),
+            // None of these tests exercise container behavior, so this
+            // just needs to construct - `connect_with_http` doesn't touch
+            // the filesystem/network the way a Unix-socket connect does
+            // (which errors immediately if no Docker/Podman is installed),
+            // so this succeeds without a real container runtime present.
+            bollard::Docker::connect_with_http(
+                "http://localhost:0",
+                5,
+                bollard::API_DEFAULT_VERSION,
+            )
+            .expect("build docker client"),
             crate::reverse_proxy::new_client(),
         )
     }

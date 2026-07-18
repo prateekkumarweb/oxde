@@ -16,7 +16,7 @@ mod zip_extract;
 
 use anyhow::Context;
 
-use crate::{config::Config, models::AppSource, state::AppState};
+use crate::{config::Config, error::AppResult, models::App, state::AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,9 +55,7 @@ async fn main() -> anyhow::Result<()> {
     containers::ensure_network(state.docker())
         .await
         .context("failed to ensure the run-mode container network exists")?;
-    reconcile_run_mode_containers(&state)
-        .await
-        .context("failed to reconcile run-mode containers on startup")?;
+    reconcile_run_mode_containers(&state).await;
 
     let app = routes::build_router(state, &config.admin_username, &config.admin_password);
 
@@ -68,44 +66,44 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Podman containers survive an `OxDe` restart (the restart policy doesn't
-/// depend on this process), so recovery here means starting only the
-/// run-mode apps whose active deployment isn't already running - routing
-/// itself needs no attaching, since it looks up a container's IP fresh on
-/// every request rather than caching it.
-async fn reconcile_run_mode_containers(state: &AppState) -> anyhow::Result<()> {
-    for app in storage::list_apps(state).context("failed to list apps")? {
-        let AppSource::Git(git_source) = &app.source else {
-            continue;
-        };
-        let Some(run_config) = &git_source.run else {
-            continue;
-        };
-        let Some(deployment_id) = storage::active_deployment_id(state, &app.name) else {
-            continue;
-        };
-        let deployment = storage::get_deployment(state, &app.name, &deployment_id)
-            .with_context(|| format!("failed to read active deployment for {}", app.name))?;
-        let Some(container_name) = &deployment.container_name else {
-            continue;
-        };
-
-        if containers::is_running(state.docker(), container_name)
-            .await
-            .with_context(|| format!("failed to check container status for {}", app.name))?
-        {
-            continue;
+/// depend on this process), so recovery here means starting any run-mode
+/// app whose container isn't already running - `containers::start` is
+/// idempotent, so this is safe to call unconditionally. One app's
+/// reconciliation failure is logged and skipped rather than aborting
+/// startup, so a single broken run-mode app can't take down unrelated apps.
+async fn reconcile_run_mode_containers(state: &AppState) {
+    let apps = match storage::list_apps(state) {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to list apps for startup reconciliation");
+            return;
         }
+    };
 
-        let checkout_dir = state
-            .apps_dir()
-            .join(&app.name)
-            .join("deployments")
-            .join(&deployment_id)
-            .join("files");
-        tracing::info!(app = app.name, "starting run-mode container on startup");
-        containers::start(state.docker(), container_name, &checkout_dir, run_config)
-            .await
-            .with_context(|| format!("failed to start container for {}", app.name))?;
+    for app in apps {
+        if let Err(err) = reconcile_app(state, &app).await {
+            tracing::error!(
+                error = %err,
+                app = app.name,
+                "failed to reconcile run-mode container on startup"
+            );
+        }
     }
-    Ok(())
+}
+
+async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
+    let Some(run_config) = app.run_config() else {
+        return Ok(());
+    };
+    let Some(deployment_id) = storage::active_deployment_id(state, &app.name) else {
+        return Ok(());
+    };
+    let deployment = storage::get_deployment(state, &app.name, &deployment_id)?;
+    let Some(container_name) = &deployment.container_name else {
+        return Ok(());
+    };
+
+    let checkout_dir = state.deployment_files_dir(&app.name, &deployment_id);
+    tracing::info!(app = app.name, "starting run-mode container on startup");
+    containers::start(state.docker(), container_name, &checkout_dir, run_config).await
 }

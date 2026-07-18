@@ -1,14 +1,21 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use bollard::Docker;
 
 use crate::reverse_proxy::ProxyClient;
+
+/// How long a resolved container IP is trusted before `container_ip` is
+/// asked again - bounds how long routing can stay wrong after a container
+/// crashes and Podman's restart policy respawns it with a new IP.
+const CONTAINER_IP_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,6 +32,7 @@ struct Inner {
     git_fetch_timeout_secs: u64,
     docker: Docker,
     proxy_client: ProxyClient,
+    container_ips: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 impl AppState {
@@ -48,6 +56,7 @@ impl AppState {
                 git_fetch_timeout_secs,
                 docker,
                 proxy_client,
+                container_ips: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -58,6 +67,26 @@ impl AppState {
 
     pub fn proxy_client(&self) -> &ProxyClient {
         &self.inner.proxy_client
+    }
+
+    pub fn cached_container_ip(&self, container_name: &str) -> Option<String> {
+        let cache = self
+            .inner
+            .container_ips
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        cache.get(container_name).and_then(|(ip, cached_at)| {
+            (cached_at.elapsed() < CONTAINER_IP_TTL).then(|| ip.clone())
+        })
+    }
+
+    pub fn cache_container_ip(&self, container_name: &str, ip: String) {
+        let mut cache = self
+            .inner
+            .container_ips
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        cache.insert(container_name.to_string(), (ip, Instant::now()));
     }
 
     pub fn max_upload_bytes(&self) -> u64 {
@@ -82,6 +111,14 @@ impl AppState {
 
     pub fn tmp_dir(&self) -> PathBuf {
         self.inner.data_dir.join("tmp")
+    }
+
+    pub fn deployment_files_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
+        self.apps_dir()
+            .join(app_name)
+            .join("deployments")
+            .join(deployment_id)
+            .join("files")
     }
 
     /// Serializes activate/delete so they can't race each other into leaving

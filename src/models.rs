@@ -11,6 +11,15 @@ pub struct App {
     pub source: AppSource,
 }
 
+impl App {
+    pub const fn run_config(&self) -> Option<&RunConfig> {
+        match &self.source {
+            AppSource::Git(git_source) => git_source.run.as_ref(),
+            AppSource::Upload => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[derive(Default)]

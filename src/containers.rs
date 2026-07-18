@@ -93,14 +93,39 @@ fn bind_mount(checkout_dir: &Path) -> String {
     format!("{}:/app", checkout_dir.display())
 }
 
-/// Runs `install_command` (if any) to completion first; on any failure,
-/// nothing named `name` is left running.
+async fn container_exists(docker: &Docker, name: &str) -> AppResult<bool> {
+    match docker.inspect_container(name, None).await {
+        Ok(_) => Ok(true),
+        Err(BollardError::DockerResponseServerError {
+            status_code: 404, ..
+        }) => Ok(false),
+        Err(err) => Err(unavailable(&err)),
+    }
+}
+
+/// Idempotent: a container with `name` already existing (running or merely
+/// stopped) is started/left alone rather than recreated, since the same
+/// deterministic name always means the same deployment and config - this
+/// matters for startup reconciliation, where the container may already be
+/// running or may have survived a restart in a stopped state. Runs
+/// `install_command` (if any) to completion first when a fresh create is
+/// needed; on any failure there, nothing named `name` is left running.
 pub async fn start(
     docker: &Docker,
     name: &str,
     checkout_dir: &Path,
     config: &RunConfig,
 ) -> AppResult<()> {
+    if is_running(docker, name).await? {
+        return Ok(());
+    }
+    if container_exists(docker, name).await? {
+        return docker
+            .start_container(name, None)
+            .await
+            .map_err(|err| start_failed(&err));
+    }
+
     let image = config.image.image_tag();
     ensure_image(docker, image).await?;
 

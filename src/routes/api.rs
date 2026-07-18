@@ -97,8 +97,20 @@ async fn delete_app(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> AppResult<StatusCode> {
-    storage::delete_app(&state, &name)?;
+    delete_app_with_containers(&state, &name).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Stops every deployment's container (normally just the active one, but
+/// checked for all of them rather than assumed) before removing the app, so
+/// deleting a run-mode app never leaves an orphaned container behind.
+pub async fn delete_app_with_containers(state: &AppState, app_name: &str) -> AppResult<()> {
+    for deployment in storage::list_deployments(state, app_name)? {
+        if let Some(container_name) = &deployment.container_name {
+            containers::stop_and_remove(state.docker(), container_name).await?;
+        }
+    }
+    storage::delete_app(state, app_name)
 }
 
 async fn create_deployment(
@@ -141,21 +153,27 @@ pub async fn deploy_from_git(state: &AppState, app_name: &str) -> AppResult<Depl
     Ok(deployment)
 }
 
-/// Activates a deployment. For a run-mode app this also stops the
-/// previously-active container and starts the new one first, so there's a
-/// real (short) traffic gap rather than a zero-downtime swap.
+/// Activates a deployment. For a run-mode app this starts the new
+/// container *before* touching anything else: if that fails, the
+/// previously-active container is untouched and the app keeps serving from
+/// it. Only once the new container is confirmed up does this stop the old
+/// container and flip `active` - so a bad redeploy degrades to "the old
+/// deployment keeps serving," never to "nothing is serving."
 pub async fn activate_with_containers(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
     let app = storage::get_app(state, app_name)?;
-    let run_config = match &app.source {
-        AppSource::Git(git_source) => git_source.run.clone(),
-        AppSource::Upload => None,
-    };
 
-    if let Some(run_config) = &run_config {
+    if let Some(run_config) = app.run_config() {
+        let deployment = storage::get_deployment(state, app_name, deployment_id)?;
+        let container_name = deployment.container_name.ok_or_else(|| {
+            AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
+        })?;
+        let checkout_dir = state.deployment_files_dir(app_name, deployment_id);
+        containers::start(state.docker(), &container_name, &checkout_dir, run_config).await?;
+
         if let Some(previous_id) = storage::active_deployment_id(state, app_name)
             && previous_id != deployment_id
             && let Ok(previous) = storage::get_deployment(state, app_name, &previous_id)
@@ -164,18 +182,6 @@ pub async fn activate_with_containers(
         {
             tracing::warn!(error = %err, app_name, "failed to stop previous container during activate");
         }
-
-        let deployment = storage::get_deployment(state, app_name, deployment_id)?;
-        let container_name = deployment.container_name.ok_or_else(|| {
-            AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
-        })?;
-        let checkout_dir = state
-            .apps_dir()
-            .join(app_name)
-            .join("deployments")
-            .join(deployment_id)
-            .join("files");
-        containers::start(state.docker(), &container_name, &checkout_dir, run_config).await?;
     }
 
     storage::activate_deployment(state, app_name, deployment_id)
@@ -184,17 +190,24 @@ pub async fn activate_with_containers(
 /// Deleting a run-mode deployment must leave no container behind for it -
 /// checked explicitly even though the one-container-per-app model means
 /// this should only ever be true for the (already-blocked) active case.
+/// The container is stopped only *after* `storage::delete_deployment`
+/// succeeds, so its own "can't delete the active deployment" guard gets to
+/// run before anything live is touched.
 pub async fn delete_deployment_with_containers(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
-    if let Ok(deployment) = storage::get_deployment(state, app_name, deployment_id)
-        && let Some(container_name) = &deployment.container_name
-    {
-        containers::stop_and_remove(state.docker(), container_name).await?;
+    let container_name = storage::get_deployment(state, app_name, deployment_id)
+        .ok()
+        .and_then(|deployment| deployment.container_name);
+
+    storage::delete_deployment(state, app_name, deployment_id)?;
+
+    if let Some(container_name) = container_name {
+        containers::stop_and_remove(state.docker(), &container_name).await?;
     }
-    storage::delete_deployment(state, app_name, deployment_id)
+    Ok(())
 }
 
 pub async fn upload_deployment(

@@ -9,8 +9,8 @@ use axum::{
 use serde::Deserialize;
 
 use super::api::{
-    AppView, activate_with_containers, app_view, delete_deployment_with_containers,
-    deploy_from_git, upload_deployment, usize_from_u64,
+    AppView, activate_with_containers, app_view, delete_app_with_containers,
+    delete_deployment_with_containers, deploy_from_git, upload_deployment, usize_from_u64,
 };
 use crate::{
     containers,
@@ -94,10 +94,15 @@ fn run_config_from_form(form: &CreateAppForm) -> AppResult<Option<RunConfig>> {
         "python314" => RunImage::Python314,
         _ => RunImage::Node24,
     };
-    let container_port =
-        form.container_port.trim().parse::<u16>().map_err(|_| {
-            AppError::InvalidRunConfig("container port must be 1-65535".to_string())
-        })?;
+    let invalid_port = || AppError::InvalidRunConfig("container port must be 1-65535".to_string());
+    let container_port = form
+        .container_port
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| invalid_port())?;
+    if container_port == 0 {
+        return Err(invalid_port());
+    }
     if form.start_command.trim().is_empty() {
         return Err(AppError::InvalidRunConfig(
             "start command is required in run mode".to_string(),
@@ -175,11 +180,11 @@ async fn app_detail_page(
     headers: HeaderMap,
 ) -> AppResult<Response> {
     let app = storage::get_app(&state, &app_name)?;
+    let run_config = app.run_config().cloned();
     let git_source = match app.source {
         AppSource::Git(git_source) => Some(git_source),
         AppSource::Upload => None,
     };
-    let run_config = git_source.as_ref().and_then(|git| git.run.clone());
     let active_id = storage::active_deployment_id(&state, &app_name);
     let container_status = match (&run_config, &active_id) {
         (Some(_), Some(id)) => Some(container_status_label(&state, &app_name, id).await),
@@ -215,7 +220,7 @@ async fn delete_app_action(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
 ) -> AppResult<Redirect> {
-    storage::delete_app(&state, &app_name)?;
+    delete_app_with_containers(&state, &app_name).await?;
     Ok(Redirect::to("/dashboard"))
 }
 
