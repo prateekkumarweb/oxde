@@ -8,10 +8,14 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::api::{AppView, app_view, deploy_from_git, upload_deployment, usize_from_u64};
+use super::api::{
+    AppView, activate_with_containers, app_view, delete_deployment_with_containers,
+    deploy_from_git, upload_deployment, usize_from_u64,
+};
 use crate::{
-    error::AppResult,
-    models::{AppSource, GitSource},
+    containers,
+    error::{AppError, AppResult},
+    models::{AppSource, GitSource, RunConfig, RunImage},
     state::AppState,
     storage,
 };
@@ -70,6 +74,42 @@ struct CreateAppForm {
     branch: String,
     #[serde(default)]
     publish_dir: String,
+    #[serde(default)]
+    run_enabled: String,
+    #[serde(default)]
+    run_image: String,
+    #[serde(default)]
+    install_command: String,
+    #[serde(default)]
+    start_command: String,
+    #[serde(default)]
+    container_port: String,
+}
+
+fn run_config_from_form(form: &CreateAppForm) -> AppResult<Option<RunConfig>> {
+    if form.run_enabled != "on" {
+        return Ok(None);
+    }
+    let image = match form.run_image.as_str() {
+        "python314" => RunImage::Python314,
+        _ => RunImage::Node24,
+    };
+    let container_port =
+        form.container_port.trim().parse::<u16>().map_err(|_| {
+            AppError::InvalidRunConfig("container port must be 1-65535".to_string())
+        })?;
+    if form.start_command.trim().is_empty() {
+        return Err(AppError::InvalidRunConfig(
+            "start command is required in run mode".to_string(),
+        ));
+    }
+    Ok(Some(RunConfig {
+        image,
+        install_command: (!form.install_command.trim().is_empty())
+            .then(|| form.install_command.trim().to_string()),
+        start_command: form.start_command.trim().to_string(),
+        container_port,
+    }))
 }
 
 async fn create_app_action(
@@ -77,15 +117,17 @@ async fn create_app_action(
     Form(form): Form<CreateAppForm>,
 ) -> AppResult<Redirect> {
     let source = if form.source == "git" {
+        let run = run_config_from_form(&form)?;
         let branch = if form.branch.trim().is_empty() {
             "main".to_string()
         } else {
-            form.branch
+            form.branch.clone()
         };
         AppSource::Git(GitSource {
-            repo_url: form.repo_url,
+            repo_url: form.repo_url.clone(),
             branch,
-            publish_dir: (!form.publish_dir.is_empty()).then_some(form.publish_dir),
+            publish_dir: (!form.publish_dir.is_empty()).then_some(form.publish_dir.clone()),
+            run,
         })
     } else {
         AppSource::Upload
@@ -108,7 +150,23 @@ struct AppDetailTemplate {
     app_name: String,
     app_host: String,
     git_source: Option<GitSource>,
+    run_config: Option<RunConfig>,
+    container_status: Option<String>,
     deployments: Vec<DeploymentRow>,
+}
+
+async fn container_status_label(state: &AppState, app_name: &str, deployment_id: &str) -> String {
+    let Ok(deployment) = storage::get_deployment(state, app_name, deployment_id) else {
+        return "unknown".to_string();
+    };
+    let Some(container_name) = &deployment.container_name else {
+        return "not started".to_string();
+    };
+    match containers::is_running(state.docker(), container_name).await {
+        Ok(true) => "running".to_string(),
+        Ok(false) => "stopped".to_string(),
+        Err(_) => "unknown".to_string(),
+    }
 }
 
 async fn app_detail_page(
@@ -121,7 +179,12 @@ async fn app_detail_page(
         AppSource::Git(git_source) => Some(git_source),
         AppSource::Upload => None,
     };
+    let run_config = git_source.as_ref().and_then(|git| git.run.clone());
     let active_id = storage::active_deployment_id(&state, &app_name);
+    let container_status = match (&run_config, &active_id) {
+        (Some(_), Some(id)) => Some(container_status_label(&state, &app_name, id).await),
+        _ => None,
+    };
     let deployments = storage::list_deployments(&state, &app_name)?
         .into_iter()
         .map(|d| DeploymentRow {
@@ -142,6 +205,8 @@ async fn app_detail_page(
         app_name,
         app_host,
         git_source,
+        run_config,
+        container_status,
         deployments,
     })
 }
@@ -175,7 +240,7 @@ async fn activate_deployment_action(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
 ) -> AppResult<Redirect> {
-    storage::activate_deployment(&state, &app_name, &id)?;
+    activate_with_containers(&state, &app_name, &id).await?;
     Ok(Redirect::to(&format!("/dashboard/apps/{app_name}")))
 }
 
@@ -183,6 +248,6 @@ async fn delete_deployment_action(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
 ) -> AppResult<Redirect> {
-    storage::delete_deployment(&state, &app_name, &id)?;
+    delete_deployment_with_containers(&state, &app_name, &id).await?;
     Ok(Redirect::to(&format!("/dashboard/apps/{app_name}")))
 }

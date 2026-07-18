@@ -8,7 +8,10 @@ anyhow = "1.0.103"
 askama = "0.16.0"
 axum = { version = "0.8.9", features = ["multipart"] }
 base64 = "0.22.1"
+bollard = "0.21.0"
+futures-util = "0.3.32"
 gix = { version = "0.85.0", features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
+hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"] }
 jiff = { version = "0.2.32", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

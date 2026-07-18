@@ -21,8 +21,14 @@ pub enum AppError {
     NotGitSourced(String),
     #[error("invalid publish dir: {0}")]
     InvalidPublishDir(String),
+    #[error("invalid run config: {0}")]
+    InvalidRunConfig(String),
     #[error("git fetch failed: {0}")]
     Git(String),
+    #[error("container failed to start: {0}")]
+    ContainerStartFailed(String),
+    #[error("container backend unavailable: {0}")]
+    ContainerUnavailable(String),
     #[error("upload too large")]
     TooLarge,
     #[error("missing 'file' field in upload")]
@@ -48,9 +54,12 @@ impl IntoResponse for AppError {
             | Self::InvalidRepoUrl(_)
             | Self::NotGitSourced(_)
             | Self::InvalidPublishDir(_)
+            | Self::InvalidRunConfig(_)
             | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::Git(_) => StatusCode::BAD_GATEWAY,
+            Self::Git(_) | Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
+                StatusCode::BAD_GATEWAY
+            }
             Self::Zip(_) | Self::Template(_) | Self::Multipart(_) | Self::Io(_) | Self::Json(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }

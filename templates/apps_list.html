@@ -2,15 +2,43 @@
 {% block content %}
 <h1>Apps</h1>
 
-<form method="post" action="/dashboard/apps" class="inline-form">
-  <input type="text" name="name" placeholder="app-name" pattern="[a-z0-9-]+" required>
-  <select name="source">
-    <option value="upload">Upload zip</option>
-    <option value="git">Git repo</option>
-  </select>
-  <input type="text" name="repo_url" placeholder="https://github.com/user/repo.git">
-  <input type="text" name="branch" placeholder="branch (e.g. main)">
-  <input type="text" name="publish_dir" placeholder="publish dir (optional)">
+<form method="post" action="/dashboard/apps" class="stacked-form">
+  <label>App name
+    <input type="text" name="name" placeholder="app-name" pattern="[a-z0-9-]+" required>
+  </label>
+  <label>Source
+    <select name="source">
+      <option value="upload">Upload zip</option>
+      <option value="git">Git repo</option>
+    </select>
+  </label>
+  <label>Repo URL
+    <input type="text" name="repo_url" placeholder="https://github.com/user/repo.git">
+  </label>
+  <label>Branch
+    <input type="text" name="branch" placeholder="branch (e.g. main)">
+  </label>
+  <label>Publish dir (static mode)
+    <input type="text" name="publish_dir" placeholder="optional">
+  </label>
+  <label class="checkbox-label">
+    <input type="checkbox" name="run_enabled"> Run mode (long-lived process, not static files)
+  </label>
+  <label>Image (run mode)
+    <select name="run_image">
+      <option value="node24">node:24</option>
+      <option value="python314">python:3.14</option>
+    </select>
+  </label>
+  <label>Install command (run mode)
+    <input type="text" name="install_command" placeholder="optional, e.g. npm install">
+  </label>
+  <label>Start command (run mode)
+    <input type="text" name="start_command" placeholder="e.g. npm start">
+  </label>
+  <label>Container port (run mode)
+    <input type="number" name="container_port" placeholder="e.g. 3000">
+  </label>
   <button type="submit">Create app</button>
 </form>
 

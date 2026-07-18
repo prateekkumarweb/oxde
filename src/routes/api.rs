@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
 use crate::{
+    containers,
     error::{AppError, AppResult},
     models::{AppSource, Deployment},
     state::AppState,
@@ -119,7 +120,8 @@ async fn create_git_deployment_endpoint(
 
 /// Runs the (blocking, network-bound) git fetch on a blocking thread, bounded
 /// by `git_fetch_timeout_secs` so a stalled fetch can't hang the request
-/// forever. Shared by the API and dashboard routes.
+/// forever, then activates the result. Shared by the API and dashboard
+/// routes.
 pub async fn deploy_from_git(state: &AppState, app_name: &str) -> AppResult<Deployment> {
     let blocking_state = state.clone();
     let blocking_app_name = app_name.to_string();
@@ -129,11 +131,70 @@ pub async fn deploy_from_git(state: &AppState, app_name: &str) -> AppResult<Depl
         storage::create_git_deployment(&blocking_state, &blocking_app_name)
     });
 
-    match tokio::time::timeout(timeout, join_handle).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(err)) => Err(AppError::Io(std::io::Error::other(err.to_string()))),
-        Err(_) => Err(AppError::Git("timed out waiting for git fetch".to_string())),
+    let deployment = match tokio::time::timeout(timeout, join_handle).await {
+        Ok(Ok(result)) => result?,
+        Ok(Err(err)) => return Err(AppError::Io(std::io::Error::other(err.to_string()))),
+        Err(_) => return Err(AppError::Git("timed out waiting for git fetch".to_string())),
+    };
+
+    activate_with_containers(state, app_name, &deployment.id).await?;
+    Ok(deployment)
+}
+
+/// Activates a deployment. For a run-mode app this also stops the
+/// previously-active container and starts the new one first, so there's a
+/// real (short) traffic gap rather than a zero-downtime swap.
+pub async fn activate_with_containers(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    let app = storage::get_app(state, app_name)?;
+    let run_config = match &app.source {
+        AppSource::Git(git_source) => git_source.run.clone(),
+        AppSource::Upload => None,
+    };
+
+    if let Some(run_config) = &run_config {
+        if let Some(previous_id) = storage::active_deployment_id(state, app_name)
+            && previous_id != deployment_id
+            && let Ok(previous) = storage::get_deployment(state, app_name, &previous_id)
+            && let Some(previous_container) = &previous.container_name
+            && let Err(err) = containers::stop_and_remove(state.docker(), previous_container).await
+        {
+            tracing::warn!(error = %err, app_name, "failed to stop previous container during activate");
+        }
+
+        let deployment = storage::get_deployment(state, app_name, deployment_id)?;
+        let container_name = deployment.container_name.ok_or_else(|| {
+            AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
+        })?;
+        let checkout_dir = state
+            .apps_dir()
+            .join(app_name)
+            .join("deployments")
+            .join(deployment_id)
+            .join("files");
+        containers::start(state.docker(), &container_name, &checkout_dir, run_config).await?;
     }
+
+    storage::activate_deployment(state, app_name, deployment_id)
+}
+
+/// Deleting a run-mode deployment must leave no container behind for it -
+/// checked explicitly even though the one-container-per-app model means
+/// this should only ever be true for the (already-blocked) active case.
+pub async fn delete_deployment_with_containers(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    if let Ok(deployment) = storage::get_deployment(state, app_name, deployment_id)
+        && let Some(container_name) = &deployment.container_name
+    {
+        containers::stop_and_remove(state.docker(), container_name).await?;
+    }
+    storage::delete_deployment(state, app_name, deployment_id)
 }
 
 pub async fn upload_deployment(
@@ -184,7 +245,7 @@ async fn activate_deployment(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
 ) -> AppResult<StatusCode> {
-    storage::activate_deployment(&state, &app_name, &id)?;
+    activate_with_containers(&state, &app_name, &id).await?;
     Ok(StatusCode::OK)
 }
 
@@ -192,7 +253,7 @@ async fn delete_deployment(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
 ) -> AppResult<StatusCode> {
-    storage::delete_deployment(&state, &app_name, &id)?;
+    delete_deployment_with_containers(&state, &app_name, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

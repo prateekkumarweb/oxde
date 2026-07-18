@@ -12,6 +12,24 @@
 {% when Some with (git) %}
 <h2>Git source</h2>
 <p>Repo: {{ git.repo_url }} (branch: {{ git.branch }})</p>
+{% match run_config %}
+{% when Some with (run) %}
+<p>Mode: run ({{ run.image.image_tag() }}, port {{ run.container_port }})</p>
+<p>Start command: {{ run.start_command }}</p>
+{% match run.install_command %}
+{% when Some with (cmd) %}<p>Install command: {{ cmd }}</p>
+{% when None %}
+{% endmatch %}
+{% match container_status %}
+{% when Some with (status) %}<p>Container: {{ status }}</p>
+{% when None %}
+{% endmatch %}
+{% when None %}
+<p>Mode: static
+{% match git.publish_dir %}
+{% when Some with (dir) %} (publish dir: {{ dir }}){% when None %}{% endmatch %}
+</p>
+{% endmatch %}
 <form method="post" action="/dashboard/apps/{{ app_name }}/deployments/git" class="inline-form">
   <button type="submit">Pull latest &amp; deploy</button>
 </form>

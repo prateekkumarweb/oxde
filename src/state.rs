@@ -6,6 +6,10 @@ use std::{
     },
 };
 
+use bollard::Docker;
+
+use crate::reverse_proxy::ProxyClient;
+
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Inner>,
@@ -19,6 +23,8 @@ struct Inner {
     max_uncompressed_bytes: u64,
     base_domain: String,
     git_fetch_timeout_secs: u64,
+    docker: Docker,
+    proxy_client: ProxyClient,
 }
 
 impl AppState {
@@ -28,6 +34,8 @@ impl AppState {
         max_uncompressed_bytes: u64,
         base_domain: String,
         git_fetch_timeout_secs: u64,
+        docker: Docker,
+        proxy_client: ProxyClient,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -38,8 +46,18 @@ impl AppState {
                 max_uncompressed_bytes,
                 base_domain,
                 git_fetch_timeout_secs,
+                docker,
+                proxy_client,
             }),
         }
+    }
+
+    pub fn docker(&self) -> &Docker {
+        &self.inner.docker
+    }
+
+    pub fn proxy_client(&self) -> &ProxyClient {
+        &self.inner.proxy_client
     }
 
     pub fn max_upload_bytes(&self) -> u64 {

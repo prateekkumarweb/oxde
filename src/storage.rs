@@ -3,6 +3,7 @@ use std::{io::ErrorKind, path::Path};
 use jiff::Timestamp;
 
 use crate::{
+    containers,
     error::{AppError, AppResult},
     git_fetch,
     models::{self, App, AppSource, Deployment, GitDeploymentInfo, GitSource},
@@ -151,14 +152,18 @@ fn stage_deployment(
         original_filename,
         upload_size_bytes,
         git: None,
+        container_name: None,
     };
     write_json(&staging.join("deployment.json"), &deployment)?;
     Ok(deployment)
 }
 
-/// Fetches the app's configured branch, checks it out, and activates it as
-/// a new deployment - the git equivalent of `create_deployment`, reusing the
-/// same stage-then-atomic-rename shape.
+/// Fetches the app's configured branch and checks it out as a new
+/// deployment, reusing `create_deployment`'s stage-then-atomic-rename shape.
+/// Unlike `create_deployment`, this does **not** auto-activate: a run-mode
+/// deployment's activation also has to start a container, which needs an
+/// async runtime, so the caller (`routes::api::deploy_from_git`) activates
+/// explicitly afterward.
 pub fn create_git_deployment(state: &AppState, app_name: &str) -> AppResult<Deployment> {
     let app = get_app(state, app_name)?;
     let AppSource::Git(git_source) = app.source else {
@@ -181,7 +186,6 @@ pub fn create_git_deployment(state: &AppState, app_name: &str) -> AppResult<Depl
         AppError::Io(err)
     })?;
 
-    activate_deployment(state, app_name, &deployment.id)?;
     Ok(deployment)
 }
 
@@ -195,19 +199,31 @@ fn stage_git_deployment(
     let checkout_dir = staging.join("_checkout");
     let commit_sha =
         git_fetch::clone_shallow(&git_source.repo_url, &git_source.branch, &checkout_dir)?;
-    // Must happen before resolving publish_dir: if publish_dir is the repo
-    // root, .git would otherwise be renamed straight into the served files/
-    // directory and exposed to visitors.
+    // Must happen before resolving publish_dir/moving the checkout: if
+    // publish_dir is the repo root (or this is a run-mode deployment, which
+    // uses the whole checkout), .git would otherwise end up inside files/.
     std::fs::remove_dir_all(checkout_dir.join(".git"))?;
-    let content_root =
-        git_fetch::resolve_publish_dir(&checkout_dir, git_source.publish_dir.as_deref())?;
-    std::fs::rename(&content_root, staging.join("files"))?;
-    std::fs::remove_dir_all(&checkout_dir).ok();
+
+    let now = Timestamp::now();
+    let id = format!("{}-{}", now.as_millisecond(), state.next_seq());
+
+    // Run mode ignores `publish_dir` and uses the whole checkout, since the
+    // container needs the full repo (package.json, etc.), not a served
+    // subtree.
+    let container_name = if git_source.run.is_some() {
+        std::fs::rename(&checkout_dir, staging.join("files"))?;
+        Some(containers::container_name(app_name, &id))
+    } else {
+        let content_root =
+            git_fetch::resolve_publish_dir(&checkout_dir, git_source.publish_dir.as_deref())?;
+        std::fs::rename(&content_root, staging.join("files"))?;
+        std::fs::remove_dir_all(&checkout_dir).ok();
+        None
+    };
 
     let content_size = dir_size_bytes(&staging.join("files"))?;
-    let now = Timestamp::now();
     let deployment = Deployment {
-        id: format!("{}-{}", now.as_millisecond(), state.next_seq()),
+        id,
         app: app_name.to_string(),
         created_at: now,
         original_filename: None,
@@ -216,6 +232,7 @@ fn stage_git_deployment(
             commit_sha,
             branch: git_source.branch.clone(),
         }),
+        container_name,
     };
     write_json(&staging.join("deployment.json"), &deployment)?;
     Ok(deployment)
@@ -255,6 +272,23 @@ pub fn list_deployments(state: &AppState, app_name: &str) -> AppResult<Vec<Deplo
     }
     deployments.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(deployments)
+}
+
+pub fn get_deployment(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<Deployment> {
+    let path = state
+        .apps_dir()
+        .join(app_name)
+        .join("deployments")
+        .join(deployment_id)
+        .join("deployment.json");
+    if !path.is_file() {
+        return Err(AppError::DeploymentNotFound(deployment_id.to_string()));
+    }
+    read_json(&path)
 }
 
 /// The active deployment id, derived by reading the `active` symlink rather
@@ -332,7 +366,15 @@ mod tests {
         ));
         std::fs::create_dir_all(dir.join("apps")).expect("create apps dir");
         std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
-        AppState::new(dir, 10_000, 10_000, "localhost".to_string(), 60)
+        AppState::new(
+            dir,
+            10_000,
+            10_000,
+            "localhost".to_string(),
+            60,
+            crate::containers::connect().expect("build podman client"),
+            crate::reverse_proxy::new_client(),
+        )
     }
 
     fn tiny_zip(content: &[u8]) -> Vec<u8> {
