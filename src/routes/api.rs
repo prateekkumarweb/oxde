@@ -62,6 +62,48 @@ pub fn usize_from_u64(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
+/// `Deployment` plus derived, request-time-only fields: whether it's the
+/// active one, and (for run-mode deployments) the backing container's
+/// current state.
+#[derive(Serialize)]
+pub struct DeploymentView {
+    #[serde(flatten)]
+    pub(crate) deployment: Deployment,
+    pub(crate) is_active: bool,
+    pub(crate) container_status: Option<ContainerStatus>,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContainerStatus {
+    Running,
+    Stopped,
+    Unknown,
+}
+
+async fn deployment_view(
+    state: &AppState,
+    active_id: Option<&str>,
+    deployment: Deployment,
+) -> DeploymentView {
+    let is_active = active_id == Some(deployment.id.as_str());
+    let container_status = match &deployment.container_name {
+        Some(container_name) => Some(
+            match containers::is_running(state.docker(), container_name).await {
+                Ok(true) => ContainerStatus::Running,
+                Ok(false) => ContainerStatus::Stopped,
+                Err(_) => ContainerStatus::Unknown,
+            },
+        ),
+        None => None,
+    };
+    DeploymentView {
+        deployment,
+        is_active,
+        container_status,
+    }
+}
+
 #[derive(Deserialize)]
 struct CreateAppRequest {
     name: String,
@@ -250,8 +292,13 @@ pub async fn upload_deployment(
 async fn list_deployments(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
-) -> AppResult<Json<Vec<Deployment>>> {
-    Ok(Json(storage::list_deployments(&state, &app_name)?))
+) -> AppResult<Json<Vec<DeploymentView>>> {
+    let active_id = storage::active_deployment_id(&state, &app_name);
+    let mut views = Vec::new();
+    for deployment in storage::list_deployments(&state, &app_name)? {
+        views.push(deployment_view(&state, active_id.as_deref(), deployment).await);
+    }
+    Ok(Json(views))
 }
 
 async fn activate_deployment(
