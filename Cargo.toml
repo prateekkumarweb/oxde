@@ -10,6 +10,7 @@ anyhow = "1.0.103"
 axum = { version = "0.8.9", features = ["multipart"] }
 base64 = "0.22.1"
 bollard = "0.21.0"
+bytes = "1.12.1"
 futures-util = "0.3.32"
 gix = { version = "0.85.0", features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
 hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"] }

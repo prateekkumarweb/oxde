@@ -2,17 +2,19 @@ use std::{collections::HashMap, path::Path};
 
 use bollard::{
     Docker,
+    container::LogOutput,
     errors::Error as BollardError,
     models::{
         ContainerCreateBody, EndpointSettings, HostConfig, NetworkCreateRequest, NetworkingConfig,
         RestartPolicy, RestartPolicyNameEnum,
     },
     query_parameters::{
-        CreateContainerOptionsBuilder, CreateImageOptionsBuilder, RemoveContainerOptionsBuilder,
-        StopContainerOptionsBuilder, WaitContainerOptionsBuilder,
+        CreateContainerOptionsBuilder, CreateImageOptionsBuilder, LogsOptionsBuilder,
+        RemoveContainerOptionsBuilder, StopContainerOptionsBuilder, WaitContainerOptionsBuilder,
     },
 };
-use futures_util::TryStreamExt;
+use bytes::Bytes;
+use futures_util::{Stream, TryStreamExt};
 
 use crate::{
     error::{AppError, AppResult},
@@ -256,6 +258,38 @@ pub async fn container_ip(docker: &Docker, name: &str) -> AppResult<Option<Strin
         .and_then(|endpoint| endpoint.ip_address)
         .filter(|ip| !ip.is_empty());
     Ok(ip)
+}
+
+const TAIL_LINES: &str = "256";
+
+/// `follow = false` returns the last `TAIL_LINES` lines and ends;
+/// `follow = true` returns the same backlog, then keeps the stream open,
+/// yielding new lines as the container produces them, until the caller
+/// drops it.
+pub fn logs(
+    docker: &Docker,
+    name: &str,
+    follow: bool,
+) -> impl Stream<Item = AppResult<Bytes>> + use<> {
+    let options = LogsOptionsBuilder::new()
+        .follow(follow)
+        .stdout(true)
+        .stderr(true)
+        .tail(TAIL_LINES)
+        .build();
+    docker
+        .logs(name, Some(options))
+        .map_ok(log_output_bytes)
+        .map_err(|err| unavailable(&err))
+}
+
+fn log_output_bytes(output: LogOutput) -> Bytes {
+    match output {
+        LogOutput::StdErr { message }
+        | LogOutput::StdOut { message }
+        | LogOutput::StdIn { message }
+        | LogOutput::Console { message } => message,
+    }
 }
 
 pub async fn is_running(docker: &Docker, name: &str) -> AppResult<bool> {

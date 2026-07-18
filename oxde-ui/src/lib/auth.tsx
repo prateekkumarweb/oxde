@@ -32,6 +32,7 @@ interface AuthContextValue {
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
+  requestStream: (path: string, init?: RequestInit) => Promise<Response>;
   isAuthenticated: boolean;
 }
 
@@ -71,9 +72,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [authHeader, logout],
   );
 
+  const requestStream = useCallback(
+    async (path: string, init?: RequestInit): Promise<Response> => {
+      if (!authHeader) {
+        throw new ApiError(401, "not authenticated");
+      }
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", authHeader);
+      const response = await fetch(`/api${path}`, { ...init, headers });
+      if (!response.ok) {
+        const body = await response.text();
+        if (response.status === 401) {
+          logout();
+        }
+        throw new ApiError(response.status, body || response.statusText);
+      }
+      return response;
+    },
+    [authHeader, logout],
+  );
+
   const value = useMemo(
-    () => ({ login, logout, request, isAuthenticated: authHeader != null }),
-    [login, logout, request, authHeader],
+    () => ({ login, logout, request, requestStream, isAuthenticated: authHeader != null }),
+    [login, logout, request, requestStream, authHeader],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

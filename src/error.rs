@@ -29,6 +29,8 @@ pub enum AppError {
     ContainerStartFailed(String),
     #[error("container backend unavailable: {0}")]
     ContainerUnavailable(String),
+    #[error("deployment {0} has no container")]
+    NoContainer(String),
     #[error("upload too large")]
     TooLarge,
     #[error("missing 'file' field in upload")]
@@ -53,6 +55,7 @@ impl IntoResponse for AppError {
             | Self::NotGitSourced(_)
             | Self::InvalidPublishDir(_)
             | Self::InvalidRunConfig(_)
+            | Self::NoContainer(_)
             | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Git(_) | Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {

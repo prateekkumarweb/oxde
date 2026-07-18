@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeploymentLogs } from "@/components/deployment-logs";
 import {
   Table,
   TableBody,
@@ -32,6 +33,7 @@ function AppDetail() {
   const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [logsFor, setLogsFor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
@@ -172,45 +174,69 @@ function AppDetail() {
             </TableHeader>
             <TableBody>
               {deployments.map((deployment) => (
-                <TableRow key={deployment.id}>
-                  <TableCell>{deployment.id}</TableCell>
-                  <TableCell>{new Date(deployment.created_at).toLocaleString()}</TableCell>
-                  <TableCell>{deployment.upload_size_bytes} bytes</TableCell>
-                  <TableCell>{deployment.git?.commit_sha ?? "—"}</TableCell>
-                  {runConfig && (
-                    <TableCell>{deployment.container_status ?? "not started"}</TableCell>
-                  )}
-                  <TableCell className="flex gap-2">
-                    {deployment.is_active ? (
-                      <Badge>active</Badge>
-                    ) : (
-                      <>
+                <Fragment key={deployment.id}>
+                  <TableRow>
+                    <TableCell>{deployment.id}</TableCell>
+                    <TableCell>{new Date(deployment.created_at).toLocaleString()}</TableCell>
+                    <TableCell>{deployment.upload_size_bytes} bytes</TableCell>
+                    <TableCell>{deployment.git?.commit_sha ?? "—"}</TableCell>
+                    {runConfig && (
+                      <TableCell>{deployment.container_status ?? "not started"}</TableCell>
+                    )}
+                    <TableCell className="flex gap-2">
+                      {runConfig && (
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={busy}
                           onClick={() =>
-                            runAction(() => api.activateDeployment(name, deployment.id))
+                            setLogsFor(logsFor === deployment.id ? null : deployment.id)
                           }
                         >
-                          Activate
+                          Logs
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={busy}
-                          onClick={() => {
-                            if (confirm("Delete this deployment?")) {
-                              void runAction(() => api.deleteDeployment(name, deployment.id));
+                      )}
+                      {deployment.is_active ? (
+                        <Badge>active</Badge>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() =>
+                              runAction(() => api.activateDeployment(name, deployment.id))
                             }
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    )}
-                  </TableCell>
-                </TableRow>
+                          >
+                            Activate
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={busy}
+                            onClick={() => {
+                              if (confirm("Delete this deployment?")) {
+                                void runAction(() => api.deleteDeployment(name, deployment.id));
+                              }
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                  {logsFor === deployment.id && (
+                    <TableRow>
+                      <TableCell colSpan={runConfig ? 6 : 5}>
+                        <DeploymentLogs
+                          appName={name}
+                          deploymentId={deployment.id}
+                          onClose={() => setLogsFor(null)}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>

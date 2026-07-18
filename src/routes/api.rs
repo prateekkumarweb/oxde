@@ -2,8 +2,10 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, Path, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    http::{StatusCode, header},
+    response::IntoResponse,
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,7 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
             "/apps/{name}/deployments/git",
             post(create_git_deployment_endpoint),
         )
+        .route("/apps/{name}/deployments/{id}/logs", get(deployment_logs))
 }
 
 /// `App` plus the currently active deployment id, derived at read time from
@@ -307,6 +310,35 @@ async fn activate_deployment(
 ) -> AppResult<StatusCode> {
     activate_with_containers(&state, &app_name, &id).await?;
     Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct LogsQuery {
+    #[serde(default)]
+    follow: bool,
+}
+
+async fn deployment_logs(
+    State(state): State<AppState>,
+    Path((app_name, id)): Path<(String, String)>,
+    Query(query): Query<LogsQuery>,
+) -> AppResult<impl IntoResponse> {
+    let deployment = storage::get_deployment(&state, &app_name, &id)?;
+    let container_name = deployment
+        .container_name
+        .ok_or_else(|| AppError::NoContainer(id.clone()))?;
+
+    let body = Body::from_stream(containers::logs(
+        state.docker(),
+        &container_name,
+        query.follow,
+    ));
+    let content_type = if query.follow {
+        "text/event-stream"
+    } else {
+        "text/plain; charset=utf-8"
+    };
+    Ok(([(header::CONTENT_TYPE, content_type)], body))
 }
 
 async fn delete_deployment(
