@@ -39,6 +39,7 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
             post(create_git_deployment_endpoint),
         )
         .route("/apps/{name}/deployments/{id}/logs", get(deployment_logs))
+        .route("/apps/{name}/deployments/{id}/stats", get(deployment_stats))
 }
 
 /// `App` plus the currently active deployment id, derived at read time from
@@ -339,6 +340,21 @@ async fn deployment_logs(
         "text/plain; charset=utf-8"
     };
     Ok(([(header::CONTENT_TYPE, content_type)], body))
+}
+
+async fn deployment_stats(
+    State(state): State<AppState>,
+    Path((app_name, id)): Path<(String, String)>,
+) -> AppResult<Json<Option<containers::ContainerStats>>> {
+    let deployment = storage::get_deployment(&state, &app_name, &id)?;
+    let Some(container_name) = deployment.container_name else {
+        return Ok(Json(None));
+    };
+    if !containers::is_running(state.docker(), &container_name).await? {
+        return Ok(Json(None));
+    }
+    let container_stats = containers::stats(state.docker(), &container_name).await?;
+    Ok(Json(Some(container_stats)))
 }
 
 async fn delete_deployment(

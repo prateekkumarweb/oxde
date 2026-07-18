@@ -37,3 +37,9 @@ export interface DeploymentView {
   is_active: boolean;
   container_status: ContainerStatus | null;
 }
+
+export interface ContainerStats {
+  cpu_percent: number;
+  memory_usage_bytes: number;
+  memory_limit_bytes: number;
+}

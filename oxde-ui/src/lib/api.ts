@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useAuth } from "@/lib/auth";
-import type { AppSource, AppView, DeploymentView, RunConfig } from "@/lib/types";
+import type { AppSource, AppView, ContainerStats, DeploymentView, RunConfig } from "@/lib/types";
 
 interface CreateAppInput {
   name: string;
@@ -22,6 +22,7 @@ interface Api {
     id: string,
     options: { follow: boolean; signal?: AbortSignal },
   ) => Promise<Response>;
+  getDeploymentStats: (appName: string, id: string) => Promise<ContainerStats | null>;
 }
 
 export function useApi(): Api {
@@ -74,9 +75,12 @@ export function useApi(): Api {
           `/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/logs?follow=${follow}`,
           { signal },
         ),
+
+      getDeploymentStats: (appName, id) =>
+        request(`/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/stats`),
     }),
     [request, requestStream],
   );
 }
 
-export type { AppSource, AppView, DeploymentView, RunConfig };
+export type { AppSource, AppView, ContainerStats, DeploymentView, RunConfig };

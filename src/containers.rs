@@ -5,16 +5,18 @@ use bollard::{
     container::LogOutput,
     errors::Error as BollardError,
     models::{
-        ContainerCreateBody, EndpointSettings, HostConfig, NetworkCreateRequest, NetworkingConfig,
-        RestartPolicy, RestartPolicyNameEnum,
+        ContainerCpuStats, ContainerCreateBody, ContainerMemoryStats, EndpointSettings, HostConfig,
+        NetworkCreateRequest, NetworkingConfig, RestartPolicy, RestartPolicyNameEnum,
     },
     query_parameters::{
         CreateContainerOptionsBuilder, CreateImageOptionsBuilder, LogsOptionsBuilder,
-        RemoveContainerOptionsBuilder, StopContainerOptionsBuilder, WaitContainerOptionsBuilder,
+        RemoveContainerOptionsBuilder, StatsOptionsBuilder, StopContainerOptionsBuilder,
+        WaitContainerOptionsBuilder,
     },
 };
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
+use serde::Serialize;
 
 use crate::{
     error::{AppError, AppResult},
@@ -290,6 +292,78 @@ fn log_output_bytes(output: LogOutput) -> Bytes {
         | LogOutput::StdIn { message }
         | LogOutput::Console { message } => message,
     }
+}
+
+#[derive(Serialize, Clone, Copy)]
+pub struct ContainerStats {
+    pub cpu_percent: f64,
+    pub memory_usage_bytes: u64,
+    pub memory_limit_bytes: u64,
+}
+
+/// `stream(false)`/`one_shot(false)`: a single request, but Podman still
+/// waits to gather two samples internally so `cpu_stats`/`precpu_stats`
+/// are both populated - needed for the CPU% delta below.
+pub async fn stats(docker: &Docker, name: &str) -> AppResult<ContainerStats> {
+    let options = StatsOptionsBuilder::new()
+        .stream(false)
+        .one_shot(false)
+        .build();
+    let response = docker
+        .stats(name, Some(options))
+        .try_next()
+        .await
+        .map_err(|err| unavailable(&err))?
+        .ok_or_else(|| AppError::ContainerUnavailable(format!("no stats for {name}")))?;
+
+    let cpu_percent = cpu_percent(response.cpu_stats.as_ref(), response.precpu_stats.as_ref());
+    let (memory_usage_bytes, memory_limit_bytes) = memory_usage(response.memory_stats.as_ref());
+
+    Ok(ContainerStats {
+        cpu_percent,
+        memory_usage_bytes,
+        memory_limit_bytes,
+    })
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn cpu_percent(
+    cpu_stats: Option<&ContainerCpuStats>,
+    precpu_stats: Option<&ContainerCpuStats>,
+) -> f64 {
+    let (Some(cpu_stats), Some(precpu_stats)) = (cpu_stats, precpu_stats) else {
+        return 0.0;
+    };
+    let (Some(cpu_usage), Some(precpu_usage)) = (&cpu_stats.cpu_usage, &precpu_stats.cpu_usage)
+    else {
+        return 0.0;
+    };
+    let (Some(total), Some(pretotal), Some(system), Some(presystem), Some(online_cpus)) = (
+        cpu_usage.total_usage,
+        precpu_usage.total_usage,
+        cpu_stats.system_cpu_usage,
+        precpu_stats.system_cpu_usage,
+        cpu_stats.online_cpus,
+    ) else {
+        return 0.0;
+    };
+
+    let cpu_delta = total.saturating_sub(pretotal) as f64;
+    let system_delta = system.saturating_sub(presystem) as f64;
+    if system_delta <= 0.0 {
+        return 0.0;
+    }
+    (cpu_delta / system_delta) * f64::from(online_cpus) * 100.0
+}
+
+fn memory_usage(memory_stats: Option<&ContainerMemoryStats>) -> (u64, u64) {
+    let Some(memory_stats) = memory_stats else {
+        return (0, 0);
+    };
+    (
+        memory_stats.usage.unwrap_or(0),
+        memory_stats.limit.unwrap_or(0),
+    )
 }
 
 pub async fn is_running(docker: &Docker, name: &str) -> AppResult<bool> {

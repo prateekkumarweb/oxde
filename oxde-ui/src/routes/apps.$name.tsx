@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeploymentLogs } from "@/components/deployment-logs";
+import { DeploymentStats } from "@/components/deployment-stats";
 import {
   Table,
   TableBody,
@@ -24,6 +25,19 @@ const RUN_IMAGE_TAGS: Record<RunImage, string> = {
   node24: "node:24",
   python314: "python:3.14",
 };
+
+const SIZE_UNITS = ["B", "KB", "MB", "GB"];
+
+function formatBytes(bytes: number): string {
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const precision = unitIndex === 0 ? 0 : 2;
+  return `${value.toFixed(precision)} ${SIZE_UNITS[unitIndex]}`;
+}
 
 function AppDetail() {
   const { name } = Route.useParams();
@@ -210,15 +224,20 @@ function AppDetail() {
                   <TableRow>
                     <TableCell className="font-mono text-xs">{deployment.id}</TableCell>
                     <TableCell>{new Date(deployment.created_at).toLocaleString()}</TableCell>
-                    <TableCell>{deployment.upload_size_bytes} bytes</TableCell>
+                    <TableCell>{formatBytes(deployment.upload_size_bytes)}</TableCell>
                     <TableCell className="font-mono text-xs">
                       {deployment.git?.commit_sha ?? "—"}
                     </TableCell>
                     {runConfig && (
                       <TableCell>
-                        <Badge variant="outline">
-                          {deployment.container_status ?? "not started"}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">
+                            {deployment.container_status ?? "not started"}
+                          </Badge>
+                          {deployment.container_status === "running" && (
+                            <DeploymentStats appName={name} deploymentId={deployment.id} />
+                          )}
+                        </div>
                       </TableCell>
                     )}
                     <TableCell>{deployment.is_active && <Badge>active</Badge>}</TableCell>
