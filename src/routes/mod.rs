@@ -26,6 +26,7 @@ pub fn build_router(state: AppState, admin_username: &str, admin_password: &str)
             get(|| async { Redirect::to("/dashboard").into_response() }),
         )
         .route("/dashboard", get(dashboard_assets::serve))
+        .route("/dashboard/", get(dashboard_assets::serve))
         .route("/dashboard/{*path}", get(dashboard_assets::serve))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(

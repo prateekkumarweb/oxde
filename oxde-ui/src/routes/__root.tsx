@@ -1,6 +1,7 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { LoginScreen } from "@/components/login-screen";
+import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 
 const RootLayout = () => {
@@ -10,19 +11,15 @@ const RootLayout = () => {
     <>
       {isAuthenticated ? (
         <div className="min-h-svh">
-          <header className="flex items-center justify-between border-b px-4 py-3">
-            <Link to="/" className="font-semibold">
+          <header className="flex items-center justify-between border-b px-6 py-3">
+            <Link to="/" className="font-heading text-lg font-semibold">
               OxDe
             </Link>
-            <button
-              type="button"
-              onClick={logout}
-              className="text-sm text-muted-foreground hover:underline"
-            >
+            <Button variant="ghost" size="sm" onClick={logout}>
               Sign out
-            </button>
+            </Button>
           </header>
-          <main className="mx-auto max-w-4xl p-4">
+          <main className="p-6">
             <Outlet />
           </main>
         </div>

@@ -70,7 +70,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <Card>
+    <Card className="max-w-xl">
       <CardHeader>
         <CardTitle>Create app</CardTitle>
       </CardHeader>
@@ -197,7 +197,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending} className="self-start">
             {pending ? "Creating…" : "Create app"}
           </Button>
         </form>
