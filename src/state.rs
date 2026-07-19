@@ -30,18 +30,26 @@ struct Inner {
     max_uncompressed_bytes: u64,
     base_domain: String,
     git_fetch_timeout_secs: u64,
+    install_timeout_secs: u64,
     docker: Docker,
     proxy_client: ProxyClient,
     container_ips: Mutex<HashMap<String, (String, Instant)>>,
 }
 
+/// Scalar config `AppState::new` bundles a plain constructor's worth of
+/// values into a struct rather than exceeding clippy's argument-count lint.
+pub struct AppStateLimits {
+    pub max_upload_bytes: u64,
+    pub max_uncompressed_bytes: u64,
+    pub base_domain: String,
+    pub git_fetch_timeout_secs: u64,
+    pub install_timeout_secs: u64,
+}
+
 impl AppState {
     pub fn new(
         data_dir: PathBuf,
-        max_upload_bytes: u64,
-        max_uncompressed_bytes: u64,
-        base_domain: String,
-        git_fetch_timeout_secs: u64,
+        limits: AppStateLimits,
         docker: Docker,
         proxy_client: ProxyClient,
     ) -> Self {
@@ -50,10 +58,11 @@ impl AppState {
                 data_dir,
                 write_lock: Mutex::new(()),
                 id_seq: AtomicU64::new(0),
-                max_upload_bytes,
-                max_uncompressed_bytes,
-                base_domain,
-                git_fetch_timeout_secs,
+                max_upload_bytes: limits.max_upload_bytes,
+                max_uncompressed_bytes: limits.max_uncompressed_bytes,
+                base_domain: limits.base_domain,
+                git_fetch_timeout_secs: limits.git_fetch_timeout_secs,
+                install_timeout_secs: limits.install_timeout_secs,
                 docker,
                 proxy_client,
                 container_ips: Mutex::new(HashMap::new()),
@@ -103,6 +112,10 @@ impl AppState {
 
     pub fn git_fetch_timeout_secs(&self) -> u64 {
         self.inner.git_fetch_timeout_secs
+    }
+
+    pub fn install_timeout_secs(&self) -> u64 {
+        self.inner.install_timeout_secs
     }
 
     pub fn apps_dir(&self) -> PathBuf {

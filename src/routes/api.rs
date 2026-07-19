@@ -14,7 +14,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     containers,
     error::{AppError, AppResult},
-    models::{AppSource, Deployment},
+    models::{AppSource, Deployment, DeploymentStatus, GitSource},
     state::AppState,
     storage,
 };
@@ -172,31 +172,114 @@ async fn create_git_deployment_endpoint(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
 ) -> AppResult<(StatusCode, Json<Deployment>)> {
-    let deployment = deploy_from_git(&state, &app_name).await?;
-    Ok((StatusCode::CREATED, Json(deployment)))
+    let deployment = start_git_deployment(&state, &app_name)?;
+    Ok((StatusCode::ACCEPTED, Json(deployment)))
 }
 
-/// Runs the (blocking, network-bound) git fetch on a blocking thread, bounded
-/// by `git_fetch_timeout_secs` so a stalled fetch can't hang the request
-/// forever, then activates the result. Shared by the API and dashboard
-/// routes.
-pub async fn deploy_from_git(state: &AppState, app_name: &str) -> AppResult<Deployment> {
-    let blocking_state = state.clone();
-    let blocking_app_name = app_name.to_string();
+/// Creates the `Pending` record synchronously, then hands the actual clone/
+/// install/activate work to a detached task - the caller gets the id back
+/// immediately and can attach to `.../logs` while it runs.
+pub fn start_git_deployment(state: &AppState, app_name: &str) -> AppResult<Deployment> {
+    let (deployment, git_source) = storage::create_pending_git_deployment(state, app_name)?;
+
+    tokio::spawn(run_git_deployment(
+        state.clone(),
+        app_name.to_string(),
+        deployment.id.clone(),
+        git_source,
+    ));
+
+    Ok(deployment)
+}
+
+async fn run_git_deployment(
+    state: AppState,
+    app_name: String,
+    deployment_id: String,
+    git_source: GitSource,
+) {
+    if let Err(err) = execute_git_deployment(&state, &app_name, &deployment_id, &git_source).await {
+        tracing::error!(error = %err, app_name, deployment_id, "git deployment failed");
+        if let Err(fail_err) =
+            storage::fail_git_deployment(&state, &app_name, &deployment_id, &err.to_string())
+        {
+            tracing::error!(error = %fail_err, app_name, deployment_id, "failed to record git deployment failure");
+        }
+    }
+}
+
+/// Status stays `Pending` through the whole clone/install/activate sequence
+/// (only flipping to `Ready` at the very end) so install-command logs -
+/// which happen inside `activate_with_containers` - stay attached to this
+/// deployment for their whole run.
+async fn execute_git_deployment(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+    git_source: &GitSource,
+) -> AppResult<()> {
+    let staging = state.unique_tmp_path("git-deployment");
     let timeout = Duration::from_secs(state.git_fetch_timeout_secs());
 
-    let join_handle = tokio::task::spawn_blocking(move || {
-        storage::create_git_deployment(&blocking_state, &blocking_app_name)
-    });
-
-    let deployment = match tokio::time::timeout(timeout, join_handle).await {
-        Ok(Ok(result)) => result?,
-        Ok(Err(err)) => return Err(AppError::Io(std::io::Error::other(err.to_string()))),
-        Err(_) => return Err(AppError::Git("timed out waiting for git fetch".to_string())),
+    let clone_result = {
+        let blocking_staging = staging.clone();
+        let blocking_git_source = git_source.clone();
+        tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                storage::clone_into_staging(&blocking_staging, &blocking_git_source)
+            }),
+        )
+        .await
+    };
+    let commit_sha = match clone_result {
+        Ok(Ok(Ok(commit_sha))) => commit_sha,
+        Ok(Ok(Err(err))) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(err);
+        }
+        Ok(Err(join_err)) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(AppError::Io(std::io::Error::other(join_err.to_string())));
+        }
+        Err(_) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(AppError::Git("timed out waiting for git fetch".to_string()));
+        }
     };
 
-    activate_with_containers(state, app_name, &deployment.id).await?;
-    Ok(deployment)
+    let stage_result = {
+        let blocking_state = state.clone();
+        let blocking_staging = staging.clone();
+        let app_name = app_name.to_string();
+        let deployment_id = deployment_id.to_string();
+        let git_source = git_source.clone();
+        tokio::task::spawn_blocking(move || {
+            storage::stage_git_deployment_files(
+                &blocking_state,
+                &blocking_staging,
+                &app_name,
+                &deployment_id,
+                &git_source,
+                commit_sha,
+            )
+        })
+        .await
+    };
+    match stage_result {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(err);
+        }
+        Err(join_err) => {
+            std::fs::remove_dir_all(&staging).ok();
+            return Err(AppError::Io(std::io::Error::other(join_err.to_string())));
+        }
+    }
+
+    activate_with_containers(state, app_name, deployment_id).await?;
+    storage::mark_git_deployment_ready(state, app_name, deployment_id)
 }
 
 /// Activates a deployment. For a run-mode app this starts the new
@@ -218,7 +301,14 @@ pub async fn activate_with_containers(
             AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
         })?;
         let checkout_dir = state.deployment_files_dir(app_name, deployment_id);
-        containers::start(state.docker(), &container_name, &checkout_dir, run_config).await?;
+        containers::start(
+            state.docker(),
+            &container_name,
+            &checkout_dir,
+            run_config,
+            Duration::from_secs(state.install_timeout_secs()),
+        )
+        .await?;
 
         if let Some(previous_id) = storage::active_deployment_id(state, app_name)
             && previous_id != deployment_id
@@ -328,12 +418,13 @@ async fn deployment_logs(
     let container_name = deployment
         .container_name
         .ok_or_else(|| AppError::NoContainer(id.clone()))?;
+    let stream_name = if matches!(deployment.status, DeploymentStatus::Pending) {
+        containers::install_container_name(&container_name)
+    } else {
+        container_name
+    };
 
-    let body = Body::from_stream(containers::logs(
-        state.docker(),
-        &container_name,
-        query.follow,
-    ));
+    let body = Body::from_stream(containers::logs(state.docker(), &stream_name, query.follow));
     let content_type = if query.follow {
         "text/event-stream"
     } else {

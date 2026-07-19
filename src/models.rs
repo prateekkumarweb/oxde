@@ -106,6 +106,27 @@ pub struct Deployment {
     /// static/upload deployments.
     #[serde(default)]
     pub container_name: Option<String>,
+    /// Defaults to `Ready` on deserialize so deployments written before this
+    /// field existed (always synchronously finished) come back correctly.
+    #[serde(default = "DeploymentStatus::default_ready")]
+    pub status: DeploymentStatus,
+}
+
+/// Every deployment starts `Ready` except an in-flight git deploy, which
+/// starts `Pending` and is only visible as a record (no `files/` yet) so a
+/// client can attach to its logs before it finishes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DeploymentStatus {
+    Pending,
+    Ready,
+    Failed { error: String },
+}
+
+impl DeploymentStatus {
+    const fn default_ready() -> Self {
+        Self::Ready
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,7 +156,7 @@ pub fn validate_slug(name: &str) -> AppResult<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{Deployment, GitSource, RunConfig, RunImage};
+    use super::{Deployment, DeploymentStatus, GitSource, RunConfig, RunImage};
 
     #[test]
     fn run_image_serializes_snake_case() {
@@ -217,5 +238,24 @@ mod tests {
         let deployment: Deployment = serde_json::from_str(json).expect("deserialize");
         assert!(deployment.container_name.is_none());
         assert!(deployment.git.is_none());
+        assert!(matches!(deployment.status, DeploymentStatus::Ready));
+    }
+
+    #[test]
+    fn deployment_status_round_trips() {
+        for status in [
+            DeploymentStatus::Pending,
+            DeploymentStatus::Ready,
+            DeploymentStatus::Failed {
+                error: "boom".to_string(),
+            },
+        ] {
+            let json = serde_json::to_string(&status).expect("serialize");
+            let round_tripped: DeploymentStatus = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(
+                serde_json::to_string(&round_tripped).expect("serialize"),
+                json
+            );
+        }
     }
 }

@@ -62,6 +62,14 @@ function AppDetail() {
 
   useEffect(refresh, [refresh]);
 
+  useEffect(() => {
+    if (!deployments?.some((deployment) => deployment.status.state === "pending")) {
+      return;
+    }
+    const interval = setInterval(refresh, 2000);
+    return () => clearInterval(interval);
+  }, [deployments, refresh]);
+
   async function runAction(action: () => Promise<unknown>) {
     setError(null);
     setBusy(true);
@@ -82,6 +90,15 @@ function AppDetail() {
     await runAction(async () => {
       await api.deleteApp(name);
       await navigate({ to: "/" });
+    });
+  }
+
+  async function handleDeployFromGit() {
+    await runAction(async () => {
+      const deployment = await api.deployFromGit(name);
+      if (runConfig) {
+        setLogsFor(deployment.id);
+      }
     });
   }
 
@@ -182,11 +199,7 @@ function AppDetail() {
           )}
 
           {gitSource ? (
-            <Button
-              onClick={() => runAction(() => api.deployFromGit(name))}
-              disabled={busy}
-              className="self-start"
-            >
+            <Button onClick={handleDeployFromGit} disabled={busy} className="self-start">
               Pull latest &amp; deploy
             </Button>
           ) : (
@@ -240,7 +253,19 @@ function AppDetail() {
                         </div>
                       </TableCell>
                     )}
-                    <TableCell>{deployment.is_active && <Badge>active</Badge>}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        {deployment.status.state === "pending" && (
+                          <Badge variant="outline">deploying…</Badge>
+                        )}
+                        {deployment.status.state === "failed" && (
+                          <Badge variant="destructive" title={deployment.status.error}>
+                            failed
+                          </Badge>
+                        )}
+                        {deployment.is_active && <Badge>active</Badge>}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         {runConfig && (
@@ -254,7 +279,7 @@ function AppDetail() {
                             Logs
                           </Button>
                         )}
-                        {!deployment.is_active && (
+                        {!deployment.is_active && deployment.status.state === "ready" && (
                           <>
                             <Button
                               size="sm"
@@ -279,6 +304,20 @@ function AppDetail() {
                               Delete
                             </Button>
                           </>
+                        )}
+                        {!deployment.is_active && deployment.status.state === "failed" && (
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={busy}
+                            onClick={() => {
+                              if (confirm("Delete this deployment?")) {
+                                void runAction(() => api.deleteDeployment(name, deployment.id));
+                              }
+                            }}
+                          >
+                            Delete
+                          </Button>
                         )}
                       </div>
                     </TableCell>

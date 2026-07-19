@@ -17,7 +17,12 @@ mod zip_extract;
 
 use anyhow::Context;
 
-use crate::{config::Config, error::AppResult, models::App, state::AppState};
+use crate::{
+    config::Config,
+    error::AppResult,
+    models::{App, DeploymentStatus},
+    state::{AppState, AppStateLimits},
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,10 +47,13 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(
         data_dir,
-        config.max_upload_bytes,
-        config.max_uncompressed_bytes,
-        config.base_domain.clone(),
-        config.git_fetch_timeout_secs,
+        AppStateLimits {
+            max_upload_bytes: config.max_upload_bytes,
+            max_uncompressed_bytes: config.max_uncompressed_bytes,
+            base_domain: config.base_domain.clone(),
+            git_fetch_timeout_secs: config.git_fetch_timeout_secs,
+            install_timeout_secs: config.install_timeout_secs,
+        },
         docker,
         reverse_proxy::new_client(),
     );
@@ -56,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     containers::ensure_network(state.docker())
         .await
         .context("failed to ensure the run-mode container network exists")?;
+    fail_pending_deployments(&state).await;
     reconcile_run_mode_containers(&state).await;
 
     let app = routes::build_router(state, &config.admin_username, &config.admin_password);
@@ -64,6 +73,68 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = ?listener.local_addr()?, "listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// A deployment left `Pending` was mid-clone/install/activate when the
+/// server stopped - its container may or may not have survived the
+/// restart, so rather than guess, it's marked `Failed` and any lingering
+/// install container is force-removed.
+async fn fail_pending_deployments(state: &AppState) {
+    let apps = match storage::list_apps(state) {
+        Ok(apps) => apps,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to list apps for pending-deployment reconciliation");
+            return;
+        }
+    };
+
+    for app in apps {
+        let deployments = match storage::list_deployments(state, &app.name) {
+            Ok(deployments) => deployments,
+            Err(err) => {
+                tracing::error!(error = %err, app = app.name, "failed to list deployments for pending-deployment reconciliation");
+                continue;
+            }
+        };
+
+        for deployment in deployments {
+            if !matches!(deployment.status, DeploymentStatus::Pending) {
+                continue;
+            }
+
+            tracing::warn!(
+                app = app.name,
+                deployment = deployment.id,
+                "marking deployment interrupted by server restart as failed"
+            );
+
+            if let Some(container_name) = &deployment.container_name {
+                let install_name = containers::install_container_name(container_name);
+                if let Err(err) = containers::stop_and_remove(state.docker(), &install_name).await {
+                    tracing::error!(
+                        error = %err,
+                        app = app.name,
+                        deployment = deployment.id,
+                        "failed to remove install container during reconciliation"
+                    );
+                }
+            }
+
+            if let Err(err) = storage::fail_git_deployment(
+                state,
+                &app.name,
+                &deployment.id,
+                "interrupted by server restart",
+            ) {
+                tracing::error!(
+                    error = %err,
+                    app = app.name,
+                    deployment = deployment.id,
+                    "failed to mark interrupted deployment as failed"
+                );
+            }
+        }
+    }
 }
 
 /// Podman containers survive an `OxDe` restart (the restart policy doesn't
@@ -106,5 +177,12 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
 
     let checkout_dir = state.deployment_files_dir(&app.name, &deployment_id);
     tracing::info!(app = app.name, "starting run-mode container on startup");
-    containers::start(state.docker(), container_name, &checkout_dir, run_config).await
+    containers::start(
+        state.docker(),
+        container_name,
+        &checkout_dir,
+        run_config,
+        std::time::Duration::from_secs(state.install_timeout_secs()),
+    )
+    .await
 }

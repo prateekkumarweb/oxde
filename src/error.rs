@@ -19,6 +19,8 @@ pub enum AppError {
     InvalidRepoUrl(String),
     #[error("app {0} is not git-sourced")]
     NotGitSourced(String),
+    #[error("app {0} already has a deployment in progress")]
+    DeploymentInProgress(String),
     #[error("invalid publish dir: {0}")]
     InvalidPublishDir(String),
     #[error("invalid run config: {0}")]
@@ -49,7 +51,9 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match &self {
             Self::AppNotFound(_) | Self::DeploymentNotFound(_) => StatusCode::NOT_FOUND,
-            Self::AppAlreadyExists(_) | Self::DeleteActiveDeployment => StatusCode::CONFLICT,
+            Self::AppAlreadyExists(_)
+            | Self::DeleteActiveDeployment
+            | Self::DeploymentInProgress(_) => StatusCode::CONFLICT,
             Self::InvalidName(_)
             | Self::InvalidRepoUrl(_)
             | Self::NotGitSourced(_)

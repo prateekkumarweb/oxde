@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use bollard::{
     Docker,
@@ -119,6 +119,7 @@ pub async fn start(
     name: &str,
     checkout_dir: &Path,
     config: &RunConfig,
+    install_timeout: Duration,
 ) -> AppResult<()> {
     if is_running(docker, name).await? {
         return Ok(());
@@ -134,7 +135,15 @@ pub async fn start(
     ensure_image(docker, image).await?;
 
     if let Some(install_command) = &config.install_command {
-        run_install_command(docker, name, checkout_dir, image, install_command).await?;
+        run_install_command(
+            docker,
+            name,
+            checkout_dir,
+            image,
+            install_command,
+            install_timeout,
+        )
+        .await?;
     }
 
     let host_config = HostConfig {
@@ -174,14 +183,23 @@ pub async fn start(
         .map_err(|err| start_failed(&err))
 }
 
+/// Exposed so the logs endpoint can stream from it before `parent_name`
+/// itself exists.
+pub fn install_container_name(parent_name: &str) -> String {
+    format!("{parent_name}-install")
+}
+
+/// Doesn't remove the container immediately on exit - `schedule_cleanup`
+/// gives an attached log-streaming client a grace period to finish reading.
 async fn run_install_command(
     docker: &Docker,
     parent_name: &str,
     checkout_dir: &Path,
     image: &str,
     install_command: &str,
+    timeout: Duration,
 ) -> AppResult<()> {
-    let installer_name = format!("{parent_name}-install");
+    let installer_name = install_container_name(parent_name);
     let body = ContainerCreateBody {
         image: Some(image.to_string()),
         working_dir: Some("/app".to_string()),
@@ -210,21 +228,40 @@ async fn run_install_command(
 
     let wait_options = WaitContainerOptionsBuilder::new().build();
     let mut wait_stream = docker.wait_container(&installer_name, Some(wait_options));
-    let wait_result = wait_stream.try_next().await;
+    let wait_result = tokio::time::timeout(timeout, wait_stream.try_next()).await;
 
-    let remove_options = RemoveContainerOptionsBuilder::new().force(true).build();
-    docker
-        .remove_container(&installer_name, Some(remove_options))
-        .await
-        .ok();
-
-    match wait_result {
-        Ok(_) => Ok(()),
-        Err(BollardError::DockerContainerWaitError { error, code }) => Err(
+    let result = match wait_result {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(BollardError::DockerContainerWaitError { error, code })) => Err(
             AppError::ContainerStartFailed(format!("install_command exited {code}: {error}")),
         ),
-        Err(err) => Err(start_failed(&err)),
-    }
+        Ok(Err(err)) => Err(start_failed(&err)),
+        Err(_) => {
+            // Stop it explicitly on timeout rather than leaving it running
+            // for the whole grace period below.
+            docker.stop_container(&installer_name, None).await.ok();
+            Err(AppError::ContainerStartFailed(format!(
+                "install_command timed out after {}s",
+                timeout.as_secs()
+            )))
+        }
+    };
+
+    schedule_cleanup(docker.clone(), installer_name);
+    result
+}
+
+const INSTALL_CONTAINER_CLEANUP_GRACE: Duration = Duration::from_secs(30);
+
+fn schedule_cleanup(docker: Docker, name: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(INSTALL_CONTAINER_CLEANUP_GRACE).await;
+        let remove_options = RemoveContainerOptionsBuilder::new().force(true).build();
+        docker
+            .remove_container(&name, Some(remove_options))
+            .await
+            .ok();
+    });
 }
 
 /// Missing (already gone) counts as success.
@@ -419,7 +456,7 @@ mod live_tests {
                     .to_string(),
             container_port: 3000,
         };
-        start(&docker, name, &checkout, &config)
+        start(&docker, name, &checkout, &config, Duration::from_secs(60))
             .await
             .expect("start container");
         assert!(is_running(&docker, name).await.expect("is_running"));
@@ -478,8 +515,35 @@ mod live_tests {
             start_command: "node -e \"1\"".to_string(),
             container_port: 3000,
         };
-        let result = start(&docker, name, &checkout, &config).await;
+        let result = start(&docker, name, &checkout, &config, Duration::from_secs(60)).await;
         assert!(result.is_err());
+        assert!(!is_running(&docker, name).await.expect("is_running"));
+        std::fs::remove_dir_all(&checkout).ok();
+    }
+
+    #[tokio::test]
+    async fn install_command_timeout_leaves_nothing_running() {
+        let docker = connect().expect("connect to podman");
+        ensure_network(&docker).await.expect("ensure_network");
+        let checkout = temp_checkout("install-timeout");
+        let name = "oxde-live-test-install-timeout";
+        stop_and_remove(&docker, name).await.ok();
+
+        let config = RunConfig {
+            image: RunImage::Node24,
+            install_command: Some("sleep 5".to_string()),
+            start_command: "node -e \"1\"".to_string(),
+            container_port: 3000,
+        };
+        let result = start(
+            &docker,
+            name,
+            &checkout,
+            &config,
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::ContainerStartFailed(_))));
         assert!(!is_running(&docker, name).await.expect("is_running"));
         std::fs::remove_dir_all(&checkout).ok();
     }

@@ -26,6 +26,11 @@ export interface AppView {
 
 export type ContainerStatus = "running" | "stopped" | "unknown";
 
+export type DeploymentStatus =
+  | { state: "pending" }
+  | { state: "ready" }
+  | { state: "failed"; error: string };
+
 export interface DeploymentView {
   id: string;
   app: string;
@@ -34,6 +39,7 @@ export interface DeploymentView {
   upload_size_bytes: number;
   git: { commit_sha: string; branch: string } | null;
   container_name: string | null;
+  status: DeploymentStatus;
   is_active: boolean;
   container_status: ContainerStatus | null;
 }

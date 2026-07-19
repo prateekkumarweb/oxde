@@ -6,7 +6,7 @@ use crate::{
     containers,
     error::{AppError, AppResult},
     git_fetch,
-    models::{self, App, AppSource, Deployment, GitDeploymentInfo, GitSource},
+    models::{self, App, AppSource, Deployment, DeploymentStatus, GitDeploymentInfo, GitSource},
     state::AppState,
 };
 
@@ -156,48 +156,66 @@ fn stage_deployment(
         upload_size_bytes,
         git: None,
         container_name: None,
+        status: DeploymentStatus::Ready,
     };
     write_json(&staging.join("deployment.json"), &deployment)?;
     Ok(deployment)
 }
 
-/// Fetches the app's configured branch and checks it out as a new
-/// deployment, reusing `create_deployment`'s stage-then-atomic-rename shape.
-/// Unlike `create_deployment`, this does **not** auto-activate: a run-mode
-/// deployment's activation also has to start a container, which needs an
-/// async runtime, so the caller (`routes::api::deploy_from_git`) activates
-/// explicitly afterward.
-pub fn create_git_deployment(state: &AppState, app_name: &str) -> AppResult<Deployment> {
+/// Writes `deployment.json` directly rather than via the stage-then-rename
+/// pattern used elsewhere here - the partial (`Pending`, no `files/`) state
+/// is the point, so a caller can attach to its logs before the rest finishes.
+pub fn create_pending_git_deployment(
+    state: &AppState,
+    app_name: &str,
+) -> AppResult<(Deployment, GitSource)> {
     let app = get_app(state, app_name)?;
     let AppSource::Git(git_source) = app.source else {
         return Err(AppError::NotGitSourced(app_name.to_string()));
     };
 
-    let app_dir = state.apps_dir().join(app_name);
-    let staging = state.unique_tmp_path("git-deployment");
-    let deployment = match stage_git_deployment(state, &staging, app_name, &git_source) {
-        Ok(deployment) => deployment,
-        Err(err) => {
-            std::fs::remove_dir_all(&staging).ok();
-            return Err(err);
-        }
+    let guard = state.write_lock();
+    let already_pending = list_deployments(state, app_name)?
+        .iter()
+        .any(|deployment| matches!(deployment.status, DeploymentStatus::Pending));
+    if already_pending {
+        drop(guard);
+        return Err(AppError::DeploymentInProgress(app_name.to_string()));
+    }
+
+    let now = Timestamp::now();
+    let id = format!("{}-{}", now.as_millisecond(), state.next_seq());
+    let container_name = git_source
+        .run
+        .is_some()
+        .then(|| containers::container_name(app_name, &id));
+
+    let deployment = Deployment {
+        id: id.clone(),
+        app: app_name.to_string(),
+        created_at: now,
+        original_filename: None,
+        upload_size_bytes: 0,
+        git: None,
+        container_name,
+        status: DeploymentStatus::Pending,
     };
 
-    let target = app_dir.join("deployments").join(&deployment.id);
-    std::fs::rename(&staging, &target).map_err(|err| {
-        std::fs::remove_dir_all(&staging).ok();
-        AppError::Io(err)
-    })?;
+    let deployment_dir = state
+        .apps_dir()
+        .join(app_name)
+        .join("deployments")
+        .join(&id);
+    std::fs::create_dir(&deployment_dir)?;
+    write_json(&deployment_dir.join("deployment.json"), &deployment)?;
+    drop(guard);
 
-    Ok(deployment)
+    Ok((deployment, git_source))
 }
 
-fn stage_git_deployment(
-    state: &AppState,
-    staging: &Path,
-    app_name: &str,
-    git_source: &GitSource,
-) -> AppResult<Deployment> {
+/// Run mode ignores `publish_dir` and keeps the whole checkout, since the
+/// container needs the full repo, not a served subtree.
+pub fn clone_into_staging(staging: &Path, git_source: &GitSource) -> AppResult<String> {
     std::fs::create_dir(staging)?;
     let checkout_dir = staging.join("_checkout");
     let commit_sha =
@@ -207,38 +225,86 @@ fn stage_git_deployment(
     // uses the whole checkout), .git would otherwise end up inside files/.
     std::fs::remove_dir_all(checkout_dir.join(".git"))?;
 
-    let now = Timestamp::now();
-    let id = format!("{}-{}", now.as_millisecond(), state.next_seq());
-
-    // Run mode ignores `publish_dir` and uses the whole checkout, since the
-    // container needs the full repo (package.json, etc.), not a served
-    // subtree.
-    let container_name = if git_source.run.is_some() {
+    if git_source.run.is_some() {
         std::fs::rename(&checkout_dir, staging.join("files"))?;
-        Some(containers::container_name(app_name, &id))
     } else {
         let content_root =
             git_fetch::resolve_publish_dir(&checkout_dir, git_source.publish_dir.as_deref())?;
         std::fs::rename(&content_root, staging.join("files"))?;
         std::fs::remove_dir_all(&checkout_dir).ok();
-        None
-    };
+    }
 
+    Ok(commit_sha)
+}
+
+/// Leaves status as `Pending` - the caller flips it to `Ready`
+/// (`mark_git_deployment_ready`) only after activation, so install-command
+/// logs stay attached to this deployment the whole time.
+pub fn stage_git_deployment_files(
+    state: &AppState,
+    staging: &Path,
+    app_name: &str,
+    deployment_id: &str,
+    git_source: &GitSource,
+    commit_sha: String,
+) -> AppResult<()> {
     let content_size = dir_size_bytes(&staging.join("files"))?;
-    let deployment = Deployment {
-        id,
-        app: app_name.to_string(),
-        created_at: now,
-        original_filename: None,
-        upload_size_bytes: content_size,
-        git: Some(GitDeploymentInfo {
-            commit_sha,
-            branch: git_source.branch.clone(),
-        }),
-        container_name,
-    };
-    write_json(&staging.join("deployment.json"), &deployment)?;
-    Ok(deployment)
+    let deployment_dir = state
+        .apps_dir()
+        .join(app_name)
+        .join("deployments")
+        .join(deployment_id);
+    std::fs::rename(staging.join("files"), deployment_dir.join("files"))?;
+
+    let mut deployment: Deployment = read_json(&deployment_dir.join("deployment.json"))?;
+    deployment.git = Some(GitDeploymentInfo {
+        commit_sha,
+        branch: git_source.branch.clone(),
+    });
+    deployment.upload_size_bytes = content_size;
+    write_json(&deployment_dir.join("deployment.json"), &deployment)?;
+    std::fs::remove_dir_all(staging).ok();
+    Ok(())
+}
+
+pub fn mark_git_deployment_ready(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    set_deployment_status(state, app_name, deployment_id, DeploymentStatus::Ready)
+}
+
+pub fn fail_git_deployment(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+    error: &str,
+) -> AppResult<()> {
+    set_deployment_status(
+        state,
+        app_name,
+        deployment_id,
+        DeploymentStatus::Failed {
+            error: error.to_string(),
+        },
+    )
+}
+
+fn set_deployment_status(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+    status: DeploymentStatus,
+) -> AppResult<()> {
+    let deployment_dir = state
+        .apps_dir()
+        .join(app_name)
+        .join("deployments")
+        .join(deployment_id);
+    let mut deployment: Deployment = read_json(&deployment_dir.join("deployment.json"))?;
+    deployment.status = status;
+    write_json(&deployment_dir.join("deployment.json"), &deployment)
 }
 
 fn dir_size_bytes(dir: &Path) -> AppResult<u64> {
@@ -355,10 +421,14 @@ mod tests {
     use std::io::Cursor;
 
     use super::{
-        activate_deployment, create_app, create_deployment, create_git_deployment, delete_app,
-        delete_deployment, get_app, list_apps, list_deployments,
+        activate_deployment, create_app, create_deployment, create_pending_git_deployment,
+        delete_app, delete_deployment, get_app, list_apps, list_deployments,
     };
-    use crate::{error::AppError, models::AppSource, state::AppState};
+    use crate::{
+        error::AppError,
+        models::AppSource,
+        state::{AppState, AppStateLimits},
+    };
 
     /// A fresh `AppState` over its own tempdir, so tests never share state.
     fn test_state(label: &str) -> AppState {
@@ -371,10 +441,13 @@ mod tests {
         std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
         AppState::new(
             dir,
-            10_000,
-            10_000,
-            "localhost".to_string(),
-            60,
+            AppStateLimits {
+                max_upload_bytes: 10_000,
+                max_uncompressed_bytes: 10_000,
+                base_domain: "localhost".to_string(),
+                git_fetch_timeout_secs: 60,
+                install_timeout_secs: 300,
+            },
             // None of these tests exercise container behavior, so this
             // just needs to construct - `connect_with_http` doesn't touch
             // the filesystem/network the way a Unix-socket connect does
@@ -533,7 +606,35 @@ mod tests {
         let state = test_state("git-not-sourced");
         create_app(&state, "blog", AppSource::Upload).expect("create_app");
 
-        let err = create_git_deployment(&state, "blog").expect_err("upload app must be rejected");
+        let err =
+            create_pending_git_deployment(&state, "blog").expect_err("upload app must be rejected");
         assert!(matches!(err, AppError::NotGitSourced(_)));
+    }
+
+    #[test]
+    fn create_pending_git_deployment_is_rejected_while_one_is_already_pending() {
+        let state = test_state("git-deploy-in-progress");
+        create_app(
+            &state,
+            "site",
+            AppSource::Git(crate::models::GitSource {
+                repo_url: "https://example.com/repo.git".to_string(),
+                branch: "main".to_string(),
+                publish_dir: None,
+                run: None,
+            }),
+        )
+        .expect("create_app");
+
+        let (first, _) =
+            create_pending_git_deployment(&state, "site").expect("first pending deploy");
+        assert!(matches!(
+            first.status,
+            crate::models::DeploymentStatus::Pending
+        ));
+
+        let err = create_pending_git_deployment(&state, "site")
+            .expect_err("a second deploy while one is pending must be rejected");
+        assert!(matches!(err, AppError::DeploymentInProgress(_)));
     }
 }
