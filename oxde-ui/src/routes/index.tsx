@@ -1,31 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CreateAppForm } from "@/components/create-app-form";
-import { useApi } from "@/lib/api";
+import { useApps } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
-import type { AppView } from "@/lib/types";
 
 export const Route = createFileRoute("/")({
   component: AppsList,
 });
 
 function AppsList() {
-  const api = useApi();
-  const [apps, setApps] = useState<AppView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: apps, error: queryError } = useApps();
   const [showCreate, setShowCreate] = useState(false);
-
-  const refresh = useCallback(() => {
-    api
-      .listApps()
-      .then(setApps)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load apps"));
-  }, [api]);
-
-  useEffect(refresh, [refresh]);
+  const error =
+    queryError instanceof ApiError ? queryError.message : queryError && "Failed to load apps";
 
   return (
     <div className="flex flex-col gap-6">
@@ -39,14 +29,7 @@ function AppsList() {
         </Button>
       </div>
 
-      {showCreate && (
-        <CreateAppForm
-          onCreated={() => {
-            setShowCreate(false);
-            refresh();
-          }}
-        />
-      )}
+      {showCreate && <CreateAppForm onCreated={() => setShowCreate(false)} />}
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

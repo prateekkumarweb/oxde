@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,9 +13,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useApi } from "@/lib/api";
+import {
+  useActivateDeployment,
+  useApp,
+  useDeleteApp,
+  useDeleteDeployment,
+  useDeployFromGit,
+  useDeployments,
+  useUploadDeployment,
+} from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
-import type { AppView, DeploymentView, RunImage } from "@/lib/types";
+import type { RunImage } from "@/lib/types";
 
 export const Route = createFileRoute("/apps/$name")({
   component: AppDetail,
@@ -42,44 +50,32 @@ function formatBytes(bytes: number): string {
 function AppDetail() {
   const { name } = Route.useParams();
   const navigate = useNavigate();
-  const api = useApi();
 
-  const [app, setApp] = useState<AppView | null>(null);
-  const [deployments, setDeployments] = useState<DeploymentView[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { data: app, error: appError } = useApp(name);
+  const { data: deployments } = useDeployments(name);
+  const deleteApp = useDeleteApp(name);
+  const deployFromGit = useDeployFromGit(name);
+  const uploadDeployment = useUploadDeployment(name);
+  const activateDeployment = useActivateDeployment(name);
+  const deleteDeployment = useDeleteDeployment(name);
+
+  const [actionError, setActionError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const refresh = useCallback(() => {
-    Promise.all([api.getApp(name), api.listDeployments(name)])
-      .then(([appResult, deploymentsResult]) => {
-        setApp(appResult);
-        setDeployments(deploymentsResult);
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load app"));
-  }, [api, name]);
-
-  useEffect(refresh, [refresh]);
-
-  useEffect(() => {
-    if (!deployments?.some((deployment) => deployment.status.state === "pending")) {
-      return;
-    }
-    const interval = setInterval(refresh, 2000);
-    return () => clearInterval(interval);
-  }, [deployments, refresh]);
+  const busy =
+    deleteApp.isPending ||
+    deployFromGit.isPending ||
+    uploadDeployment.isPending ||
+    activateDeployment.isPending ||
+    deleteDeployment.isPending;
 
   async function runAction(action: () => Promise<unknown>) {
-    setError(null);
-    setBusy(true);
+    setActionError(null);
     try {
       await action();
-      refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Action failed");
-    } finally {
-      setBusy(false);
+      setActionError(err instanceof ApiError ? err.message : "Action failed");
     }
   }
 
@@ -88,14 +84,14 @@ function AppDetail() {
       return;
     }
     await runAction(async () => {
-      await api.deleteApp(name);
+      await deleteApp.mutateAsync();
       await navigate({ to: "/" });
     });
   }
 
   async function handleDeployFromGit() {
     await runAction(async () => {
-      const deployment = await api.deployFromGit(name);
+      const deployment = await deployFromGit.mutateAsync();
       if (gitSource && gitSource.mode.type !== "static") {
         setLogsFor(deployment.id);
       }
@@ -108,11 +104,15 @@ function AppDetail() {
     if (!file) {
       return;
     }
-    await runAction(() => api.uploadDeployment(name, file));
+    await runAction(() => uploadDeployment.mutateAsync(file));
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   }
+
+  const error =
+    actionError ??
+    (appError instanceof ApiError ? appError.message : appError && "Failed to load app");
 
   if (error && !app) {
     return <p className="text-sm text-destructive">{error}</p>;
@@ -313,7 +313,7 @@ function AppDetail() {
                               variant="outline"
                               disabled={busy}
                               onClick={() =>
-                                runAction(() => api.activateDeployment(name, deployment.id))
+                                runAction(() => activateDeployment.mutateAsync(deployment.id))
                               }
                             >
                               Activate
@@ -324,7 +324,7 @@ function AppDetail() {
                               disabled={busy}
                               onClick={() => {
                                 if (confirm("Delete this deployment?")) {
-                                  void runAction(() => api.deleteDeployment(name, deployment.id));
+                                  void runAction(() => deleteDeployment.mutateAsync(deployment.id));
                                 }
                               }}
                             >
@@ -339,7 +339,7 @@ function AppDetail() {
                             disabled={busy}
                             onClick={() => {
                               if (confirm("Delete this deployment?")) {
-                                void runAction(() => api.deleteDeployment(name, deployment.id));
+                                void runAction(() => deleteDeployment.mutateAsync(deployment.id));
                               }
                             }}
                           >

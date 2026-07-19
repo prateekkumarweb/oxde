@@ -1,6 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { NotFound } from "@/components/not-found";
 import { AuthProvider } from "@/lib/auth";
 
@@ -12,6 +14,15 @@ const router = createRouter({
   routeTree,
   basepath: "/dashboard",
   defaultNotFoundComponent: NotFound,
+});
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5_000,
+      retry: false,
+    },
+  },
 });
 
 // Register the router instance for type safety
@@ -27,9 +38,12 @@ if (!rootElement.innerHTML) {
   const root = createRoot(rootElement);
   root.render(
     <StrictMode>
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+        <ReactQueryDevtools />
+      </QueryClientProvider>
     </StrictMode>,
   );
 }

@@ -10,14 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useApi } from "@/lib/api";
+import { useCreateApp } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
 import type { AppSource, GitDeployMode, RunImage } from "@/lib/types";
 
 type GitMode = GitDeployMode["type"];
 
 export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
-  const api = useApi();
+  const createApp = useCreateApp();
   const [name, setName] = useState("");
   const [source, setSource] = useState<"upload" | "git">("upload");
   const [repoUrl, setRepoUrl] = useState("");
@@ -35,59 +35,58 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const [startCommand, setStartCommand] = useState("");
   const [containerPort, setContainerPort] = useState("");
 
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const pending = createApp.isPending;
+  const error =
+    createApp.error instanceof ApiError
+      ? createApp.error.message
+      : createApp.error && "Failed to create app";
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setError(null);
-    setPending(true);
-    try {
-      let appSource: AppSource | undefined;
-      if (source === "git") {
-        let mode: GitDeployMode;
-        if (gitMode === "run") {
-          mode = {
-            type: "run",
-            image: runImage,
-            install_command: installCommand.trim() || null,
-            start_command: startCommand.trim(),
-            container_port: Number(containerPort),
-          };
-        } else if (gitMode === "build") {
-          mode = {
-            type: "build",
-            image: buildImage,
-            command: buildCommand.trim(),
-            output_dir: outputDir.trim(),
-          };
-        } else {
-          mode = { type: "static", publish_dir: publishDir.trim() || null };
-        }
-        appSource = {
-          type: "git",
-          repo_url: repoUrl,
-          branch: branch.trim() || "main",
-          mode,
+    let appSource: AppSource | undefined;
+    if (source === "git") {
+      let mode: GitDeployMode;
+      if (gitMode === "run") {
+        mode = {
+          type: "run",
+          image: runImage,
+          install_command: installCommand.trim() || null,
+          start_command: startCommand.trim(),
+          container_port: Number(containerPort),
         };
+      } else if (gitMode === "build") {
+        mode = {
+          type: "build",
+          image: buildImage,
+          command: buildCommand.trim(),
+          output_dir: outputDir.trim(),
+        };
+      } else {
+        mode = { type: "static", publish_dir: publishDir.trim() || null };
       }
-      await api.createApp({ name, source: appSource });
-      setName("");
-      setRepoUrl("");
-      setBranch("");
-      setGitMode("static");
-      setPublishDir("");
-      setBuildCommand("");
-      setOutputDir("");
-      setInstallCommand("");
-      setStartCommand("");
-      setContainerPort("");
-      onCreated();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create app");
-    } finally {
-      setPending(false);
+      appSource = {
+        type: "git",
+        repo_url: repoUrl,
+        branch: branch.trim() || "main",
+        mode,
+      };
     }
+    try {
+      await createApp.mutateAsync({ name, source: appSource });
+    } catch {
+      return;
+    }
+    setName("");
+    setRepoUrl("");
+    setBranch("");
+    setGitMode("static");
+    setPublishDir("");
+    setBuildCommand("");
+    setOutputDir("");
+    setInstallCommand("");
+    setStartCommand("");
+    setContainerPort("");
+    onCreated();
   }
 
   return (

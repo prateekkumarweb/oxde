@@ -21,11 +21,12 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
 
   useEffect(() => {
     const controller = new AbortController();
-    setLines("");
-    setError(null);
-    setState("connecting");
 
     async function read() {
+      setLines("");
+      setError(null);
+      setState("connecting");
+
       try {
         const response = await api.streamLogs(appName, deploymentId, {
           follow: following,
@@ -37,7 +38,7 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
           return;
         }
         const decoder = new TextDecoder();
-        for (;;) {
+        while (true) {
           const { done, value } = await reader.read();
           if (done) {
             break;

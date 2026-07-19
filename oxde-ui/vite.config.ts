@@ -26,8 +26,23 @@ export default defineConfig({
   },
   fmt: {},
   lint: {
-    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
-    rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    plugins: ["eslint", "typescript", "unicorn", "oxc", "react", "react-perf"],
+    jsPlugins: [
+      { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
+      { name: "@tanstack/query", specifier: "@tanstack/eslint-plugin-query" },
+    ],
+    rules: {
+      "vite-plus/prefer-vite-plus-imports": "error",
+      "react/react-compiler": "error",
+      "@tanstack/query/exhaustive-deps": ["error", { allowlist: { variables: ["api"] } }],
+      "@tanstack/query/no-rest-destructuring": "warn",
+      "@tanstack/query/stable-query-client": "error",
+      "@tanstack/query/no-unstable-deps": "error",
+      "@tanstack/query/infinite-query-property-order": "error",
+      "@tanstack/query/no-void-query-fn": "error",
+      "@tanstack/query/mutation-property-order": "error",
+      "@tanstack/query/prefer-query-options": "error",
+    },
     options: { typeAware: true, typeCheck: true },
   },
 });
