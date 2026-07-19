@@ -183,6 +183,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
         container_name,
         &checkout_dir,
         run_config,
+        &app.env_vars,
         std::time::Duration::from_secs(state.install_timeout_secs()),
     )
     .await

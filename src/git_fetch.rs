@@ -58,7 +58,6 @@ pub fn resolve_publish_dir(checkout_dir: &Path, publish_dir: Option<&str>) -> Ap
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::resolve_publish_dir;
     use crate::error::AppError;

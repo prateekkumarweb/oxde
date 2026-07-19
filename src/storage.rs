@@ -23,8 +23,14 @@ pub fn sweep_tmp_dir(state: &AppState) -> std::io::Result<()> {
     std::fs::create_dir_all(&tmp_dir)
 }
 
-pub fn create_app(state: &AppState, name: &str, source: AppSource) -> AppResult<App> {
+pub fn create_app(
+    state: &AppState,
+    name: &str,
+    source: AppSource,
+    env_vars: Vec<models::EnvVar>,
+) -> AppResult<App> {
     models::validate_slug(name)?;
+    models::validate_env_vars(&env_vars)?;
     if let AppSource::Git(ref git_source) = source {
         models::validate_repo_url(&git_source.repo_url)?;
         match &git_source.mode {
@@ -42,6 +48,7 @@ pub fn create_app(state: &AppState, name: &str, source: AppSource) -> AppResult<
         name: name.to_string(),
         created_at: Timestamp::now(),
         source,
+        env_vars,
     };
     write_json(&staging.join("app.json"), &app)?;
 
@@ -85,6 +92,26 @@ pub fn get_app(state: &AppState, name: &str) -> AppResult<App> {
         return Err(AppError::AppNotFound(name.to_string()));
     }
     read_json(&path)
+}
+
+/// Replaces the full env var list (not a merge by key). Doesn't touch any
+/// running container - new values take effect on the next deploy/start.
+pub fn update_app_env_vars(
+    state: &AppState,
+    name: &str,
+    env_vars: Vec<models::EnvVar>,
+) -> AppResult<App> {
+    models::validate_env_vars(&env_vars)?;
+    let path = state.apps_dir().join(name).join("app.json");
+    if !path.is_file() {
+        return Err(AppError::AppNotFound(name.to_string()));
+    }
+    let guard = state.write_lock();
+    let mut app: App = read_json(&path)?;
+    app.env_vars = env_vars;
+    write_json(&path, &app)?;
+    drop(guard);
+    Ok(app)
 }
 
 pub fn delete_app(state: &AppState, name: &str) -> AppResult<()> {
@@ -443,7 +470,6 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> AppResult<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::io::Cursor;
 
@@ -504,7 +530,8 @@ mod tests {
     fn create_list_get_app_round_trip() {
         let state = test_state("round-trip");
 
-        let created = create_app(&state, "blog", AppSource::Upload).expect("create_app");
+        let created =
+            create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
         assert_eq!(created.name, "blog");
 
         let fetched = get_app(&state, "blog").expect("get_app");
@@ -518,10 +545,10 @@ mod tests {
     #[test]
     fn duplicate_create_is_rejected_and_leaves_tmp_clean() {
         let state = test_state("duplicate-create");
-        create_app(&state, "blog", AppSource::Upload).expect("first create_app");
+        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("first create_app");
 
-        let err =
-            create_app(&state, "blog", AppSource::Upload).expect_err("duplicate create must fail");
+        let err = create_app(&state, "blog", AppSource::Upload, Vec::new())
+            .expect_err("duplicate create must fail");
         assert!(matches!(err, AppError::AppAlreadyExists(_)));
 
         let leftovers: Vec<_> = std::fs::read_dir(state.tmp_dir())
@@ -536,7 +563,7 @@ mod tests {
     #[test]
     fn delete_app_removes_it() {
         let state = test_state("delete-app");
-        create_app(&state, "blog", AppSource::Upload).expect("create_app");
+        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
 
         delete_app(&state, "blog").expect("delete_app");
 
@@ -554,7 +581,7 @@ mod tests {
     #[test]
     fn deployment_lifecycle_activate_and_delete() {
         let state = test_state("deployment-lifecycle");
-        create_app(&state, "blog", AppSource::Upload).expect("create_app");
+        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
 
         let zip_v1 = state.tmp_dir().join("v1.zip");
         std::fs::write(&zip_v1, tiny_zip(b"v1")).expect("write v1 zip");
@@ -594,7 +621,7 @@ mod tests {
     #[test]
     fn sweep_tmp_dir_finishes_an_interrupted_delete() {
         let state = test_state("sweep-recovery");
-        create_app(&state, "blog", AppSource::Upload).expect("create_app");
+        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
 
         let zip = state.tmp_dir().join("v1.zip");
         std::fs::write(&zip, tiny_zip(b"v1")).expect("write zip");
@@ -632,7 +659,7 @@ mod tests {
     #[test]
     fn create_git_deployment_on_upload_app_is_rejected() {
         let state = test_state("git-not-sourced");
-        create_app(&state, "blog", AppSource::Upload).expect("create_app");
+        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
 
         let err =
             create_pending_git_deployment(&state, "blog").expect_err("upload app must be rejected");
@@ -650,6 +677,7 @@ mod tests {
                 branch: "main".to_string(),
                 mode: GitDeployMode::default(),
             }),
+            Vec::new(),
         )
         .expect("create_app");
 

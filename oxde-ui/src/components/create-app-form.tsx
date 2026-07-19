@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/select";
 import { useCreateApp } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
-import type { AppSource, GitDeployMode, RunImage } from "@/lib/types";
+import { EnvVarEditor } from "@/components/env-var-editor";
+import type { AppSource, EnvVar, GitDeployMode, RunImage } from "@/lib/types";
 
 type GitMode = GitDeployMode["type"];
 
@@ -34,6 +35,8 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const [installCommand, setInstallCommand] = useState("");
   const [startCommand, setStartCommand] = useState("");
   const [containerPort, setContainerPort] = useState("");
+
+  const [envVars, setEnvVars] = useState<EnvVar[]>([]);
 
   const pending = createApp.isPending;
   const error =
@@ -71,8 +74,11 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
         mode,
       };
     }
+    const trimmedEnvVars = envVars
+      .map((envVar) => ({ key: envVar.key.trim(), value: envVar.value }))
+      .filter((envVar) => envVar.key !== "");
     try {
-      await createApp.mutateAsync({ name, source: appSource });
+      await createApp.mutateAsync({ name, source: appSource, env_vars: trimmedEnvVars });
     } catch {
       return;
     }
@@ -86,6 +92,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
     setInstallCommand("");
     setStartCommand("");
     setContainerPort("");
+    setEnvVars([]);
     onCreated();
   }
 
@@ -259,6 +266,10 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                     />
                   </div>
                 </>
+              )}
+
+              {(gitMode === "run" || gitMode === "build") && (
+                <EnvVarEditor envVars={envVars} onChange={setEnvVars} />
               )}
             </>
           )}

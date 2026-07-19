@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeploymentLogs } from "@/components/deployment-logs";
 import { DeploymentStats } from "@/components/deployment-stats";
+import { EnvVarEditor } from "@/components/env-var-editor";
 import {
   Table,
   TableBody,
@@ -20,10 +21,11 @@ import {
   useDeleteDeployment,
   useDeployFromGit,
   useDeployments,
+  useUpdateAppEnvVars,
   useUploadDeployment,
 } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
-import type { RunImage } from "@/lib/types";
+import type { EnvVar, RunImage } from "@/lib/types";
 
 export const Route = createFileRoute("/apps/$name")({
   component: AppDetail,
@@ -58,9 +60,11 @@ function AppDetail() {
   const uploadDeployment = useUploadDeployment(name);
   const activateDeployment = useActivateDeployment(name);
   const deleteDeployment = useDeleteDeployment(name);
+  const updateAppEnvVars = useUpdateAppEnvVars(name);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [localEnvVars, setLocalEnvVars] = useState<EnvVar[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const busy =
@@ -110,6 +114,16 @@ function AppDetail() {
     }
   }
 
+  async function handleSaveEnvVars(envVars: EnvVar[]) {
+    const trimmed = envVars
+      .map((envVar) => ({ key: envVar.key.trim(), value: envVar.value }))
+      .filter((envVar) => envVar.key !== "");
+    await runAction(async () => {
+      await updateAppEnvVars.mutateAsync(trimmed);
+      setLocalEnvVars(null);
+    });
+  }
+
   const error =
     actionError ??
     (appError instanceof ApiError ? appError.message : appError && "Failed to load app");
@@ -127,6 +141,8 @@ function AppDetail() {
   const runConfig = gitSource?.mode.type === "run" ? gitSource.mode : null;
   const buildConfig = gitSource?.mode.type === "build" ? gitSource.mode : null;
   const publishDir = gitSource?.mode.type === "static" ? gitSource.mode.publish_dir : null;
+  const envVars = localEnvVars ?? app.env_vars;
+  const envVarsDirty = localEnvVars !== null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -239,6 +255,24 @@ function AppDetail() {
           )}
         </CardContent>
       </Card>
+
+      {(runConfig || buildConfig) && (
+        <Card className="max-w-2xl">
+          <CardHeader>
+            <CardTitle>Environment variables</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <EnvVarEditor envVars={envVars} onChange={setLocalEnvVars} />
+            <Button
+              onClick={() => handleSaveEnvVars(envVars)}
+              disabled={busy || updateAppEnvVars.isPending || !envVarsDirty}
+              className="self-start"
+            >
+              Save
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div>
         <h2 className="mb-2 font-heading text-lg font-medium">Deployments</h2>

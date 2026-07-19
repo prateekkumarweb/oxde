@@ -61,7 +61,6 @@ fn enclosed_path<R: Read>(entry: &ZipFile<'_, R>) -> AppResult<PathBuf> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::io::Cursor;
 

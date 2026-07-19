@@ -27,11 +27,17 @@ export type AppSource =
       mode: GitDeployMode;
     };
 
+export interface EnvVar {
+  key: string;
+  value: string;
+}
+
 export interface AppView {
   name: string;
   created_at: string;
   active_deployment_id: string | null;
   source: AppSource;
+  env_vars: EnvVar[];
 }
 
 export type ContainerStatus = "running" | "stopped" | "unknown";

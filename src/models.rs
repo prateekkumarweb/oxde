@@ -9,6 +9,16 @@ pub struct App {
     pub created_at: Timestamp,
     #[serde(default)]
     pub source: AppSource,
+    /// Injected into run-mode containers and install/build commands.
+    /// Doesn't apply to static-mode apps, which run no commands at all.
+    #[serde(default)]
+    pub env_vars: Vec<EnvVar>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvVar {
+    pub key: String,
+    pub value: String,
 }
 
 impl App {
@@ -118,6 +128,25 @@ pub fn validate_run_config(run: &RunConfig) -> AppResult<()> {
     Ok(())
 }
 
+pub fn validate_env_vars(env_vars: &[EnvVar]) -> AppResult<()> {
+    for env_var in env_vars {
+        let valid = !env_var.key.is_empty()
+            && env_var
+                .key
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && env_var
+                .key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !valid {
+            return Err(AppError::InvalidEnvVar(env_var.key.clone()));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_build_config(build: &BuildConfig) -> AppResult<()> {
     if build.command.trim().is_empty() {
         return Err(AppError::InvalidBuildConfig(
@@ -202,7 +231,6 @@ pub fn validate_slug(name: &str) -> AppResult<()> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{Deployment, DeploymentStatus, GitDeployMode, GitSource, RunConfig, RunImage};
 

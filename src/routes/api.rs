@@ -14,7 +14,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     containers,
     error::{AppError, AppResult},
-    models::{AppSource, Deployment, DeploymentStatus, GitDeployMode, GitSource},
+    models::{AppSource, Deployment, DeploymentStatus, EnvVar, GitDeployMode, GitSource},
     state::AppState,
     storage,
 };
@@ -22,7 +22,10 @@ use crate::{
 pub fn router(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
         .route("/apps", get(list_apps).post(create_app))
-        .route("/apps/{name}", get(get_app).delete(delete_app))
+        .route(
+            "/apps/{name}",
+            get(get_app).delete(delete_app).patch(update_app_env_vars),
+        )
         .route(
             "/apps/{name}/deployments",
             post(create_deployment)
@@ -50,6 +53,7 @@ pub struct AppView {
     pub(crate) created_at: jiff::Timestamp,
     pub(crate) active_deployment_id: Option<String>,
     pub(crate) source: AppSource,
+    pub(crate) env_vars: Vec<EnvVar>,
 }
 
 pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
@@ -59,6 +63,7 @@ pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
         created_at: app.created_at,
         active_deployment_id,
         source: app.source,
+        env_vars: app.env_vars,
     }
 }
 
@@ -113,6 +118,13 @@ struct CreateAppRequest {
     name: String,
     #[serde(default)]
     source: AppSource,
+    #[serde(default)]
+    env_vars: Vec<EnvVar>,
+}
+
+#[derive(Deserialize)]
+struct UpdateAppEnvVarsRequest {
+    env_vars: Vec<EnvVar>,
 }
 
 async fn list_apps(State(state): State<AppState>) -> AppResult<Json<Vec<AppView>>> {
@@ -127,7 +139,7 @@ async fn create_app(
     State(state): State<AppState>,
     Json(body): Json<CreateAppRequest>,
 ) -> AppResult<(StatusCode, Json<AppView>)> {
-    let app = storage::create_app(&state, &body.name, body.source)?;
+    let app = storage::create_app(&state, &body.name, body.source, body.env_vars)?;
     Ok((StatusCode::CREATED, Json(app_view(&state, app))))
 }
 
@@ -136,6 +148,15 @@ async fn get_app(
     Path(name): Path<String>,
 ) -> AppResult<Json<AppView>> {
     let app = storage::get_app(&state, &name)?;
+    Ok(Json(app_view(&state, app)))
+}
+
+async fn update_app_env_vars(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<UpdateAppEnvVarsRequest>,
+) -> AppResult<Json<AppView>> {
+    let app = storage::update_app_env_vars(&state, &name, body.env_vars)?;
     Ok(Json(app_view(&state, app)))
 }
 
@@ -250,12 +271,14 @@ async fn execute_git_deployment(
     if let GitDeployMode::Build(build) = &git_source.mode {
         let container_name = containers::container_name(app_name, deployment_id);
         let build_timeout = Duration::from_secs(state.build_timeout_secs());
+        let app = storage::get_app(state, app_name)?;
         if let Err(err) = containers::run_build_command(
             state.docker(),
             &container_name,
             &checkout_dir,
             build.image.image_tag(),
             &build.command,
+            &app.env_vars,
             build_timeout,
         )
         .await
@@ -325,6 +348,7 @@ pub async fn activate_with_containers(
             &container_name,
             &checkout_dir,
             run_config,
+            &app.env_vars,
             Duration::from_secs(state.install_timeout_secs()),
         )
         .await?;

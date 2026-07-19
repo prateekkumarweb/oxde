@@ -20,8 +20,15 @@ use serde::Serialize;
 
 use crate::{
     error::{AppError, AppResult},
-    models::RunConfig,
+    models::{EnvVar, RunConfig},
 };
+
+fn env_strings(env_vars: &[EnvVar]) -> Vec<String> {
+    env_vars
+        .iter()
+        .map(|env_var| format!("{}={}", env_var.key, env_var.value))
+        .collect()
+}
 
 /// Every run-mode container joins this network - `host_routing.rs` dials a
 /// container's IP on it directly instead of publishing host ports.
@@ -119,6 +126,7 @@ pub async fn start(
     name: &str,
     checkout_dir: &Path,
     config: &RunConfig,
+    env_vars: &[EnvVar],
     install_timeout: Duration,
 ) -> AppResult<()> {
     if is_running(docker, name).await? {
@@ -141,6 +149,7 @@ pub async fn start(
             checkout_dir,
             image,
             install_command,
+            env_vars,
             install_timeout,
         )
         .await?;
@@ -166,7 +175,7 @@ pub async fn start(
             "-c".to_string(),
             config.start_command.clone(),
         ]),
-        env: Some(vec![format!("PORT={}", config.container_port)]),
+        env: Some(env_strings(env_vars)),
         host_config: Some(host_config),
         networking_config: Some(networking_config()),
         ..Default::default()
@@ -199,6 +208,7 @@ async fn run_install_command(
     checkout_dir: &Path,
     image: &str,
     install_command: &str,
+    env_vars: &[EnvVar],
     timeout: Duration,
 ) -> AppResult<()> {
     run_command_to_completion(
@@ -207,6 +217,7 @@ async fn run_install_command(
         checkout_dir,
         image,
         install_command,
+        env_vars,
         timeout,
     )
     .await
@@ -218,6 +229,7 @@ pub async fn run_build_command(
     checkout_dir: &Path,
     image: &str,
     build_command: &str,
+    env_vars: &[EnvVar],
     timeout: Duration,
 ) -> AppResult<()> {
     run_command_to_completion(
@@ -226,6 +238,7 @@ pub async fn run_build_command(
         checkout_dir,
         image,
         build_command,
+        env_vars,
         timeout,
     )
     .await
@@ -239,6 +252,7 @@ async fn run_command_to_completion(
     checkout_dir: &Path,
     image: &str,
     command: &str,
+    env_vars: &[EnvVar],
     timeout: Duration,
 ) -> AppResult<()> {
     let body = ContainerCreateBody {
@@ -249,6 +263,7 @@ async fn run_command_to_completion(
             "-c".to_string(),
             command.to_string(),
         ]),
+        env: Some(env_strings(env_vars)),
         host_config: Some(HostConfig {
             binds: Some(vec![bind_mount(checkout_dir)]),
             ..Default::default()
@@ -460,7 +475,6 @@ pub async fn is_running(docker: &Docker, name: &str) -> AppResult<bool> {
 /// Requires a real Podman socket - these fail (not skip) if one isn't
 /// reachable, so a missing Podman shows up as a test failure.
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod live_tests {
     use super::*;
     use crate::models::{RunConfig, RunImage};
@@ -493,13 +507,20 @@ mod live_tests {
             image: RunImage::Node24,
             install_command: None,
             start_command:
-                "node -e \"require('http').createServer((_, res) => res.end('ok')).listen(process.env.PORT)\""
+                "node -e \"require('http').createServer((_, res) => res.end('ok')).listen(3000)\""
                     .to_string(),
             container_port: 3000,
         };
-        start(&docker, name, &checkout, &config, Duration::from_secs(60))
-            .await
-            .expect("start container");
+        start(
+            &docker,
+            name,
+            &checkout,
+            &config,
+            &[],
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("start container");
         assert!(is_running(&docker, name).await.expect("is_running"));
 
         let ip = container_ip(&docker, name)
@@ -556,7 +577,15 @@ mod live_tests {
             start_command: "node -e \"1\"".to_string(),
             container_port: 3000,
         };
-        let result = start(&docker, name, &checkout, &config, Duration::from_secs(60)).await;
+        let result = start(
+            &docker,
+            name,
+            &checkout,
+            &config,
+            &[],
+            Duration::from_secs(60),
+        )
+        .await;
         assert!(result.is_err());
         assert!(!is_running(&docker, name).await.expect("is_running"));
         std::fs::remove_dir_all(&checkout).ok();
@@ -581,6 +610,7 @@ mod live_tests {
             name,
             &checkout,
             &config,
+            &[],
             Duration::from_millis(200),
         )
         .await;

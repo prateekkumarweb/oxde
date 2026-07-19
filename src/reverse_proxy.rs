@@ -47,7 +47,6 @@ pub async fn proxy(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use axum::{Router, routing::get};
     use tokio::net::TcpListener;

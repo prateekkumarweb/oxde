@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
-import type { AppSource } from "@/lib/types";
+import type { AppSource, EnvVar } from "@/lib/types";
 
 type Api = ReturnType<typeof useApi>;
 
@@ -55,8 +55,18 @@ export function useCreateApp() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; source?: AppSource }) => api.createApp(input),
+    mutationFn: (input: { name: string; source?: AppSource; env_vars?: EnvVar[] }) =>
+      api.createApp(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appsKey() }),
+  });
+}
+
+export function useUpdateAppEnvVars(name: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (envVars: EnvVar[]) => api.updateAppEnvVars(name, envVars),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(name) }),
   });
 }
 

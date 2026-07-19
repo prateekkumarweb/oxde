@@ -1,10 +1,18 @@
 import { useMemo } from "react";
 import { useAuth } from "@/lib/auth";
-import type { AppSource, AppView, ContainerStats, DeploymentView, RunConfig } from "@/lib/types";
+import type {
+  AppSource,
+  AppView,
+  ContainerStats,
+  DeploymentView,
+  EnvVar,
+  RunConfig,
+} from "@/lib/types";
 
 interface CreateAppInput {
   name: string;
   source?: AppSource;
+  env_vars?: EnvVar[];
 }
 
 interface Api {
@@ -12,6 +20,7 @@ interface Api {
   createApp: (input: CreateAppInput) => Promise<AppView>;
   getApp: (name: string) => Promise<AppView>;
   deleteApp: (name: string) => Promise<void>;
+  updateAppEnvVars: (name: string, envVars: EnvVar[]) => Promise<AppView>;
   listDeployments: (appName: string) => Promise<DeploymentView[]>;
   uploadDeployment: (appName: string, file: File) => Promise<DeploymentView>;
   deployFromGit: (appName: string) => Promise<DeploymentView>;
@@ -42,6 +51,13 @@ export function useApi(): Api {
       getApp: (name) => request(`/apps/${encodeURIComponent(name)}`),
 
       deleteApp: (name) => request(`/apps/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
+      updateAppEnvVars: (name, envVars) =>
+        request(`/apps/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ env_vars: envVars }),
+        }),
 
       listDeployments: (appName) => request(`/apps/${encodeURIComponent(appName)}/deployments`),
 
