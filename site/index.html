@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OxDe - Self-hosted deployment platform</title>
+    <meta
+      name="description"
+      content="OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, designed to run comfortably on modest hardware. Currently in early development."
+    />
+    <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --iron-950: #14171a;
+        --steel-900: #1b1f24;
+        --steel-800: #232830;
+        --steel-600: #3a424d;
+        --steel-500: #5a6472;
+        --rust-500: #ce422b;
+        --rust-400: #e2634a;
+        --patina-400: #6fa88f;
+        --paper-100: #ece8e0;
+        --paper-300: #b8b3a8;
+        --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--iron-950);
+        color: var(--paper-100);
+        font-family: var(--sans);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          radial-gradient(
+            ellipse at 15% -10%,
+            rgba(196, 98, 45, 0.1),
+            transparent 45%
+          ),
+          radial-gradient(
+            ellipse at 85% 10%,
+            rgba(111, 168, 143, 0.06),
+            transparent 40%
+          );
+        z-index: 0;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 24px;
+        position: relative;
+        z-index: 1;
+      }
+
+      .eyebrow {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--rust-400);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .eyebrow::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        background: var(--rust-500);
+        display: inline-block;
+        flex-shrink: 0;
+      }
+
+      /* ---------- Nav ---------- */
+      header.nav {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(20, 23, 26, 0.86);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--steel-600);
+      }
+
+      header.nav .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 16px;
+        padding-bottom: 16px;
+      }
+
+      .brand {
+        font-family: var(--mono);
+        font-weight: 700;
+        font-size: 1.05rem;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 28px;
+        font-family: var(--mono);
+        font-size: 0.82rem;
+      }
+
+      .nav-links a {
+        text-decoration: none;
+        color: var(--paper-300);
+        transition: color 0.15s;
+      }
+
+      .nav-links a:hover {
+        color: var(--paper-100);
+      }
+
+      .nav-links a.cta {
+        color: var(--paper-100);
+        background: var(--rust-500);
+        padding: 7px 14px;
+        border-radius: 2px;
+        font-weight: 600;
+      }
+
+      .nav-links a.cta:hover {
+        background: var(--rust-400);
+        color: var(--paper-100);
+      }
+
+      /* ---------- Hero ---------- */
+      .hero {
+        padding-top: 64px;
+        padding-bottom: 72px;
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 56px;
+        align-items: start;
+      }
+
+      .hero h1 {
+        font-family: var(--mono);
+        font-weight: 700;
+        font-size: clamp(2.2rem, 4.6vw, 3.4rem);
+        line-height: 1.08;
+        letter-spacing: -0.01em;
+        margin: 18px 0 22px;
+      }
+
+      .hero h1 .accent {
+        color: var(--rust-500);
+      }
+
+      .hero p.lede {
+        font-size: 1.08rem;
+        color: var(--paper-300);
+        max-width: 46ch;
+        margin: 0 0 32px;
+      }
+
+      .hero p.lede code {
+        font-family: var(--mono);
+        background: var(--steel-800);
+        padding: 1px 6px;
+        border-radius: 3px;
+        color: var(--paper-100);
+        font-size: 0.92em;
+      }
+
+      .cta-row {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .btn {
+        font-family: var(--mono);
+        font-size: 0.86rem;
+        font-weight: 600;
+        text-decoration: none;
+        padding: 12px 20px;
+        border-radius: 2px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition:
+          transform 0.12s,
+          background 0.15s,
+          border-color 0.15s;
+      }
+
+      .btn:active {
+        transform: translateY(1px);
+      }
+
+      .btn-primary {
+        background: var(--rust-500);
+        color: var(--paper-100);
+      }
+
+      .btn-primary:hover {
+        background: var(--rust-400);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--paper-100);
+        border: 1px solid var(--steel-600);
+      }
+
+      .btn-ghost:hover {
+        border-color: var(--paper-300);
+      }
+
+      /* ---------- Spec panel (signature element) ---------- */
+      .spec-panel {
+        background: var(--steel-900);
+        border: 1px solid var(--steel-600);
+        position: relative;
+        font-family: var(--mono);
+      }
+
+      .spec-panel::before,
+      .spec-panel::after,
+      .spec-panel .corner-tl,
+      .spec-panel .corner-br {
+        content: "";
+        position: absolute;
+        width: 9px;
+        height: 9px;
+        border: 1px solid var(--rust-500);
+      }
+
+      .spec-panel::before {
+        top: -1px;
+        left: -1px;
+        border-right: none;
+        border-bottom: none;
+      }
+
+      .spec-panel::after {
+        bottom: -1px;
+        right: -1px;
+        border-left: none;
+        border-top: none;
+      }
+
+      .spec-panel-head {
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--steel-600);
+        font-size: 0.72rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--paper-300);
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .spec-panel-head span.rev {
+        color: var(--steel-500);
+      }
+
+      .spec-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 13px 18px;
+        border-bottom: 1px solid var(--steel-800);
+        font-size: 0.84rem;
+      }
+
+      .spec-row:last-child {
+        border-bottom: none;
+      }
+
+      .spec-row dt {
+        color: var(--paper-300);
+      }
+
+      .spec-row dd {
+        margin: 0;
+        text-align: right;
+        color: var(--paper-100);
+        font-weight: 500;
+      }
+
+      .spec-row dd.ok {
+        color: var(--patina-400);
+      }
+
+      /* ---------- Sections ---------- */
+      section {
+        padding: 76px 0;
+        position: relative;
+        z-index: 1;
+      }
+
+      section.rule-top {
+        border-top: 1px solid var(--steel-800);
+      }
+
+      h2 {
+        font-family: var(--mono);
+        font-size: clamp(1.5rem, 2.6vw, 2rem);
+        margin: 14px 0 16px;
+        letter-spacing: -0.01em;
+      }
+
+      section > .wrap > p.section-lede {
+        color: var(--paper-300);
+        max-width: 60ch;
+        font-size: 1rem;
+        margin: 0 0 44px;
+      }
+
+      /* ---------- Capability grid ---------- */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1px;
+        background: var(--steel-600);
+        border: 1px solid var(--steel-600);
+      }
+
+      .card {
+        background: var(--steel-900);
+        padding: 26px 26px 28px;
+      }
+
+      .card .tag {
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 2px;
+        margin-bottom: 14px;
+      }
+
+      .card .tag.ok {
+        color: var(--patina-400);
+        background: rgba(111, 168, 143, 0.12);
+      }
+
+      .card .tag.dev {
+        color: var(--rust-400);
+        background: rgba(206, 66, 43, 0.12);
+      }
+
+      .card h3 {
+        font-family: var(--mono);
+        font-size: 1.05rem;
+        margin: 0 0 10px;
+        font-weight: 600;
+      }
+
+      .card p {
+        color: var(--paper-300);
+        font-size: 0.93rem;
+        margin: 0;
+      }
+
+      /* ---------- CTA ---------- */
+      .cta-block {
+        text-align: center;
+        padding: 88px 0 100px;
+      }
+
+      .cta-block h2 {
+        font-size: clamp(1.7rem, 3.4vw, 2.3rem);
+      }
+
+      .cta-block p {
+        color: var(--paper-300);
+        max-width: 50ch;
+        margin: 0 auto 32px;
+      }
+
+      .cta-block .cta-row {
+        justify-content: center;
+      }
+
+      footer {
+        border-top: 1px solid var(--steel-800);
+        padding: 28px 0 40px;
+      }
+
+      footer .wrap {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--steel-500);
+      }
+
+      footer a {
+        color: var(--paper-300);
+        text-decoration: none;
+      }
+
+      footer a:hover {
+        color: var(--paper-100);
+      }
+
+      footer .foot-links {
+        display: flex;
+        gap: 20px;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--rust-400);
+        outline-offset: 2px;
+      }
+
+      @media (max-width: 860px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .nav-links {
+          gap: 16px;
+        }
+
+        .nav-links a:not(.cta) {
+          display: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <a class="brand" href="/">
+          <img src="assets/icon.svg" alt="" width="22" height="22" />OxDe
+        </a>
+        <nav class="nav-links">
+          <a class="cta" href="https://github.com/prateekkumarweb/oxde">
+            GitHub
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <div class="wrap hero">
+        <div>
+          <p class="eyebrow">Self-hosted deployment platform</p>
+          <h1>
+            Your infrastructure.<br />Your <span class="accent">deploys.</span>
+          </h1>
+          <p class="lede">
+            OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify,
+            designed to stay light on resources, from a spare server to modest
+            hardware.
+          </p>
+          <div class="cta-row">
+            <a
+              class="btn btn-primary"
+              href="https://github.com/prateekkumarweb/oxde"
+              >View on GitHub →</a
+            >
+          </div>
+        </div>
+
+        <div class="spec-panel">
+          <div class="spec-panel-head">
+            <span>OXDE</span><span class="rev">in dev</span>
+          </div>
+          <dl style="margin: 0">
+            <div class="spec-row">
+              <dt>Status</dt>
+              <dd class="ok">Early development</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Footprint</dt>
+              <dd class="ok">Runs on low-power hardware</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Containers</dt>
+              <dd>Rootless Podman</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Interface</dt>
+              <dd>Dashboard + JSON API</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Deploy sources</dt>
+              <dd>Git · Zip upload</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Routing</dt>
+              <dd>Per-app subdomain</dd>
+            </div>
+            <div class="spec-row">
+              <dt>License</dt>
+              <dd>MIT</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <section id="capabilities" class="rule-top">
+        <div class="wrap">
+          <p class="eyebrow">Features</p>
+          <h2>What OxDe does</h2>
+          <p class="section-lede">What's here today, and what's coming next.</p>
+          <div class="grid">
+            <div class="card">
+              <div class="tag ok">Shipped</div>
+              <h3>Git deploys</h3>
+              <p>Point OxDe at a repository and it takes care of the rest.</p>
+            </div>
+            <div class="card">
+              <div class="tag ok">Shipped</div>
+              <h3>Zip upload</h3>
+              <p>
+                No repo yet? Upload a build folder straight from the dashboard.
+              </p>
+            </div>
+            <div class="card">
+              <div class="tag ok">Shipped</div>
+              <h3>Run real apps</h3>
+              <p>
+                Not just static files: long-running processes run in their own
+                containers.
+              </p>
+            </div>
+            <div class="card">
+              <div class="tag ok">Shipped</div>
+              <h3>Subdomain routing</h3>
+              <p>Every app gets its own subdomain and its own origin.</p>
+            </div>
+            <div class="card">
+              <div class="tag dev">In dev</div>
+              <h3>Dashboard &amp; API</h3>
+              <p>
+                Manage every app and deployment from the dashboard, or script it
+                against the JSON API.
+              </p>
+            </div>
+            <div class="card">
+              <div class="tag dev">In dev</div>
+              <h3>Build step</h3>
+              <p>
+                Run your build command before deploy, instead of shipping
+                pre-built output.
+              </p>
+            </div>
+            <div class="card">
+              <div class="tag dev">In dev</div>
+              <h3>Auto deploy</h3>
+              <p>Push to your repo and OxDe picks it up on its own.</p>
+            </div>
+            <div class="card">
+              <div class="tag dev">In dev</div>
+              <h3>Multi-host</h3>
+              <p>
+                Spread apps across more than one machine from a single
+                dashboard.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-block rule-top">
+        <div class="wrap">
+          <p class="eyebrow" style="justify-content: center">
+            Own your infrastructure
+          </p>
+          <h2>Your hardware. Your deploys.</h2>
+          <p>
+            OxDe is open source under the MIT license. Clone it, build it, and
+            run your own deployment platform tonight.
+          </p>
+          <div class="cta-row">
+            <a
+              class="btn btn-ghost"
+              href="https://github.com/prateekkumarweb/oxde#readme"
+            >
+              Read the docs
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>© 2026 Prateek Kumar · OxDe</span>
+        <div class="foot-links">
+          <a href="https://github.com/prateekkumarweb/oxde/blob/main/LICENSE">
+            MIT License
+          </a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
