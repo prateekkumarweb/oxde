@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
-    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "@tanstack/react-router": "^1.170.18",
     "@tanstack/react-router-devtools": "^1.167.0",
     "class-variance-authority": "^0.7.1",

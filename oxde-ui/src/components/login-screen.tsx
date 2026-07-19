@@ -32,10 +32,7 @@ export function LoginScreen() {
       <div className="hidden flex-col justify-center gap-6 border-r bg-muted/40 p-10 lg:flex">
         <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-32" />
         <div className="font-heading text-3xl font-semibold">OxDe</div>
-        <p
-          className="max-w-sm text-base text-muted-foreground"
-          style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}
-        >
+        <p className="max-w-sm text-base text-muted-foreground">
           A self-hostable alternative to Vercel, Netlify, and Coolify, designed to stay light on
           resources, from a spare server to modest hardware.
         </p>

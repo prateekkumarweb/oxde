@@ -167,7 +167,11 @@ function AppDetail() {
               {runConfig && (
                 <>
                   <dt className="text-muted-foreground">Image</dt>
-                  <dd>{RUN_IMAGE_TAGS[runConfig.image]}</dd>
+                  <dd>
+                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                      {RUN_IMAGE_TAGS[runConfig.image]}
+                    </code>
+                  </dd>
                   <dt className="text-muted-foreground">Port</dt>
                   <dd>{runConfig.container_port}</dd>
                   {runConfig.install_command && (
@@ -191,7 +195,11 @@ function AppDetail() {
               {buildConfig && (
                 <>
                   <dt className="text-muted-foreground">Image</dt>
-                  <dd>{RUN_IMAGE_TAGS[buildConfig.image]}</dd>
+                  <dd>
+                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                      {RUN_IMAGE_TAGS[buildConfig.image]}
+                    </code>
+                  </dd>
                   <dt className="text-muted-foreground">Build</dt>
                   <dd>
                     <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
@@ -199,7 +207,11 @@ function AppDetail() {
                     </code>
                   </dd>
                   <dt className="text-muted-foreground">Output dir</dt>
-                  <dd>{buildConfig.output_dir}</dd>
+                  <dd>
+                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                      {buildConfig.output_dir}
+                    </code>
+                  </dd>
                 </>
               )}
               {publishDir && (
