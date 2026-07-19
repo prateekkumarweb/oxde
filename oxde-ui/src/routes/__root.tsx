@@ -12,7 +12,8 @@ const RootLayout = () => {
       {isAuthenticated ? (
         <div className="min-h-svh">
           <header className="flex items-center justify-between border-b px-6 py-3">
-            <Link to="/" className="font-heading text-lg font-semibold">
+            <Link to="/" className="flex items-center gap-2 font-heading text-lg font-semibold">
+              <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-5" />
               OxDe
             </Link>
             <Button variant="ghost" size="sm" onClick={logout}>
