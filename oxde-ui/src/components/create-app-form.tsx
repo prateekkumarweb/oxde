@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,7 +12,9 @@ import {
 } from "@/components/ui/select";
 import { useApi } from "@/lib/api";
 import { ApiError } from "@/lib/auth";
-import type { AppSource, RunImage } from "@/lib/types";
+import type { AppSource, GitDeployMode, RunImage } from "@/lib/types";
+
+type GitMode = GitDeployMode["type"];
 
 export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const api = useApi();
@@ -21,12 +22,19 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const [source, setSource] = useState<"upload" | "git">("upload");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [gitMode, setGitMode] = useState<GitMode>("static");
+
   const [publishDir, setPublishDir] = useState("");
-  const [runEnabled, setRunEnabled] = useState(false);
+
+  const [buildImage, setBuildImage] = useState<RunImage>("node24");
+  const [buildCommand, setBuildCommand] = useState("");
+  const [outputDir, setOutputDir] = useState("");
+
   const [runImage, setRunImage] = useState<RunImage>("node24");
   const [installCommand, setInstallCommand] = useState("");
   const [startCommand, setStartCommand] = useState("");
   const [containerPort, setContainerPort] = useState("");
+
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -37,27 +45,40 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
     try {
       let appSource: AppSource | undefined;
       if (source === "git") {
+        let mode: GitDeployMode;
+        if (gitMode === "run") {
+          mode = {
+            type: "run",
+            image: runImage,
+            install_command: installCommand.trim() || null,
+            start_command: startCommand.trim(),
+            container_port: Number(containerPort),
+          };
+        } else if (gitMode === "build") {
+          mode = {
+            type: "build",
+            image: buildImage,
+            command: buildCommand.trim(),
+            output_dir: outputDir.trim(),
+          };
+        } else {
+          mode = { type: "static", publish_dir: publishDir.trim() || null };
+        }
         appSource = {
           type: "git",
           repo_url: repoUrl,
           branch: branch.trim() || "main",
-          publish_dir: publishDir.trim() || null,
-          run: runEnabled
-            ? {
-                image: runImage,
-                install_command: installCommand.trim() || null,
-                start_command: startCommand.trim(),
-                container_port: Number(containerPort),
-              }
-            : null,
+          mode,
         };
       }
       await api.createApp({ name, source: appSource });
       setName("");
       setRepoUrl("");
       setBranch("");
+      setGitMode("static");
       setPublishDir("");
-      setRunEnabled(false);
+      setBuildCommand("");
+      setOutputDir("");
       setInstallCommand("");
       setStartCommand("");
       setContainerPort("");
@@ -123,16 +144,73 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                 />
               </div>
 
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="run-enabled"
-                  checked={runEnabled}
-                  onCheckedChange={(checked) => setRunEnabled(checked === true)}
-                />
-                <Label htmlFor="run-enabled">Run mode (long-lived process, not static files)</Label>
+              <div className="flex flex-col gap-2">
+                <Label>Deploy mode</Label>
+                <Select value={gitMode} onValueChange={(value) => setGitMode(value as GitMode)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="static">Static (repo files are already the site)</SelectItem>
+                    <SelectItem value="build">Build (run a command, serve its output)</SelectItem>
+                    <SelectItem value="run">Run (long-lived process, not static files)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
-              {runEnabled ? (
+              {gitMode === "static" && (
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="publish-dir">Publish dir</Label>
+                  <Input
+                    id="publish-dir"
+                    value={publishDir}
+                    onChange={(event) => setPublishDir(event.target.value)}
+                    placeholder="optional"
+                  />
+                </div>
+              )}
+
+              {gitMode === "build" && (
+                <>
+                  <div className="flex flex-col gap-2">
+                    <Label>Image</Label>
+                    <Select
+                      value={buildImage}
+                      onValueChange={(value) => setBuildImage(value as RunImage)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="node24">node:24</SelectItem>
+                        <SelectItem value="python314">python:3.14</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="build-command">Build command</Label>
+                    <Input
+                      id="build-command"
+                      value={buildCommand}
+                      onChange={(event) => setBuildCommand(event.target.value)}
+                      placeholder="e.g. npm run build"
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="output-dir">Output dir</Label>
+                    <Input
+                      id="output-dir"
+                      value={outputDir}
+                      onChange={(event) => setOutputDir(event.target.value)}
+                      placeholder="e.g. dist"
+                      required
+                    />
+                  </div>
+                </>
+              )}
+
+              {gitMode === "run" && (
                 <>
                   <div className="flex flex-col gap-2">
                     <Label>Image</Label>
@@ -182,16 +260,6 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                     />
                   </div>
                 </>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="publish-dir">Publish dir</Label>
-                  <Input
-                    id="publish-dir"
-                    value={publishDir}
-                    onChange={(event) => setPublishDir(event.target.value)}
-                    placeholder="optional"
-                  />
-                </div>
               )}
             </>
           )}

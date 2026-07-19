@@ -96,7 +96,7 @@ function AppDetail() {
   async function handleDeployFromGit() {
     await runAction(async () => {
       const deployment = await api.deployFromGit(name);
-      if (runConfig) {
+      if (gitSource && gitSource.mode.type !== "static") {
         setLogsFor(deployment.id);
       }
     });
@@ -124,7 +124,9 @@ function AppDetail() {
   const backendPort = import.meta.env.DEV ? "3000" : window.location.port;
   const appHost = `${name}.${window.location.hostname}${backendPort ? `:${backendPort}` : ""}`;
   const gitSource = app.source.type === "git" ? app.source : null;
-  const runConfig = gitSource?.run ?? null;
+  const runConfig = gitSource?.mode.type === "run" ? gitSource.mode : null;
+  const buildConfig = gitSource?.mode.type === "build" ? gitSource.mode : null;
+  const publishDir = gitSource?.mode.type === "static" ? gitSource.mode.publish_dir : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -152,7 +154,7 @@ function AppDetail() {
           <CardTitle className="flex items-center gap-2">
             Source
             <Badge variant="secondary">{gitSource ? "git" : "upload"}</Badge>
-            {gitSource && <Badge variant="outline">{runConfig ? "run" : "static"}</Badge>}
+            {gitSource && <Badge variant="outline">{gitSource.mode.type}</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -162,7 +164,7 @@ function AppDetail() {
               <dd className="truncate">{gitSource.repo_url}</dd>
               <dt className="text-muted-foreground">Branch</dt>
               <dd>{gitSource.branch}</dd>
-              {runConfig ? (
+              {runConfig && (
                 <>
                   <dt className="text-muted-foreground">Image</dt>
                   <dd>{RUN_IMAGE_TAGS[runConfig.image]}</dd>
@@ -185,13 +187,26 @@ function AppDetail() {
                     </code>
                   </dd>
                 </>
-              ) : (
-                gitSource.publish_dir && (
-                  <>
-                    <dt className="text-muted-foreground">Publish dir</dt>
-                    <dd>{gitSource.publish_dir}</dd>
-                  </>
-                )
+              )}
+              {buildConfig && (
+                <>
+                  <dt className="text-muted-foreground">Image</dt>
+                  <dd>{RUN_IMAGE_TAGS[buildConfig.image]}</dd>
+                  <dt className="text-muted-foreground">Build</dt>
+                  <dd>
+                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                      {buildConfig.command}
+                    </code>
+                  </dd>
+                  <dt className="text-muted-foreground">Output dir</dt>
+                  <dd>{buildConfig.output_dir}</dd>
+                </>
+              )}
+              {publishDir && (
+                <>
+                  <dt className="text-muted-foreground">Publish dir</dt>
+                  <dd>{publishDir}</dd>
+                </>
               )}
             </dl>
           ) : (
@@ -268,7 +283,7 @@ function AppDetail() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        {runConfig && (
+                        {(runConfig || (buildConfig && deployment.status.state !== "ready")) && (
                           <Button
                             size="sm"
                             variant="outline"

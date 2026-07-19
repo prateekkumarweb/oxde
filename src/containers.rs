@@ -189,8 +189,10 @@ pub fn install_container_name(parent_name: &str) -> String {
     format!("{parent_name}-install")
 }
 
-/// Doesn't remove the container immediately on exit - `schedule_cleanup`
-/// gives an attached log-streaming client a grace period to finish reading.
+pub fn build_container_name(parent_name: &str) -> String {
+    format!("{parent_name}-build")
+}
+
 async fn run_install_command(
     docker: &Docker,
     parent_name: &str,
@@ -199,14 +201,53 @@ async fn run_install_command(
     install_command: &str,
     timeout: Duration,
 ) -> AppResult<()> {
-    let installer_name = install_container_name(parent_name);
+    run_command_to_completion(
+        docker,
+        &install_container_name(parent_name),
+        checkout_dir,
+        image,
+        install_command,
+        timeout,
+    )
+    .await
+}
+
+pub async fn run_build_command(
+    docker: &Docker,
+    parent_name: &str,
+    checkout_dir: &Path,
+    image: &str,
+    build_command: &str,
+    timeout: Duration,
+) -> AppResult<()> {
+    run_command_to_completion(
+        docker,
+        &build_container_name(parent_name),
+        checkout_dir,
+        image,
+        build_command,
+        timeout,
+    )
+    .await
+}
+
+/// Doesn't remove the container immediately on exit - `schedule_cleanup`
+/// gives an attached log-streaming client a grace period to finish reading.
+async fn run_command_to_completion(
+    docker: &Docker,
+    container_name: &str,
+    checkout_dir: &Path,
+    image: &str,
+    command: &str,
+    timeout: Duration,
+) -> AppResult<()> {
     let body = ContainerCreateBody {
         image: Some(image.to_string()),
         working_dir: Some("/app".to_string()),
         cmd: Some(vec![
             "sh".to_string(),
             "-c".to_string(),
-            install_command.to_string(),
+            command.to_string(),
         ]),
         host_config: Some(HostConfig {
             binds: Some(vec![bind_mount(checkout_dir)]),
@@ -215,39 +256,39 @@ async fn run_install_command(
         ..Default::default()
     };
     let options = CreateContainerOptionsBuilder::new()
-        .name(&installer_name)
+        .name(container_name)
         .build();
     docker
         .create_container(Some(options), body)
         .await
         .map_err(|err| start_failed(&err))?;
     docker
-        .start_container(&installer_name, None)
+        .start_container(container_name, None)
         .await
         .map_err(|err| start_failed(&err))?;
 
     let wait_options = WaitContainerOptionsBuilder::new().build();
-    let mut wait_stream = docker.wait_container(&installer_name, Some(wait_options));
+    let mut wait_stream = docker.wait_container(container_name, Some(wait_options));
     let wait_result = tokio::time::timeout(timeout, wait_stream.try_next()).await;
 
     let result = match wait_result {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(BollardError::DockerContainerWaitError { error, code })) => Err(
-            AppError::ContainerStartFailed(format!("install_command exited {code}: {error}")),
+            AppError::ContainerStartFailed(format!("command exited {code}: {error}")),
         ),
         Ok(Err(err)) => Err(start_failed(&err)),
         Err(_) => {
             // Stop it explicitly on timeout rather than leaving it running
             // for the whole grace period below.
-            docker.stop_container(&installer_name, None).await.ok();
+            docker.stop_container(container_name, None).await.ok();
             Err(AppError::ContainerStartFailed(format!(
-                "install_command timed out after {}s",
+                "command timed out after {}s",
                 timeout.as_secs()
             )))
         }
     };
 
-    schedule_cleanup(docker.clone(), installer_name);
+    schedule_cleanup(docker.clone(), container_name.to_string());
     result
 }
 

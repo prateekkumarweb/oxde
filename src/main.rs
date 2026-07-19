@@ -53,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
             base_domain: config.base_domain.clone(),
             git_fetch_timeout_secs: config.git_fetch_timeout_secs,
             install_timeout_secs: config.install_timeout_secs,
+            build_timeout_secs: config.build_timeout_secs,
         },
         docker,
         reverse_proxy::new_client(),

@@ -17,6 +17,8 @@ pub struct Config {
     pub git_fetch_timeout_secs: u64,
     #[serde(default = "default_install_timeout_secs")]
     pub install_timeout_secs: u64,
+    #[serde(default = "default_build_timeout_secs")]
+    pub build_timeout_secs: u64,
 }
 
 const fn default_max_upload_bytes() -> u64 {
@@ -32,6 +34,10 @@ const fn default_git_fetch_timeout_secs() -> u64 {
 }
 
 const fn default_install_timeout_secs() -> u64 {
+    300
+}
+
+const fn default_build_timeout_secs() -> u64 {
     300
 }
 

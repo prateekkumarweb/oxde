@@ -31,6 +31,7 @@ struct Inner {
     base_domain: String,
     git_fetch_timeout_secs: u64,
     install_timeout_secs: u64,
+    build_timeout_secs: u64,
     docker: Docker,
     proxy_client: ProxyClient,
     container_ips: Mutex<HashMap<String, (String, Instant)>>,
@@ -44,6 +45,7 @@ pub struct AppStateLimits {
     pub base_domain: String,
     pub git_fetch_timeout_secs: u64,
     pub install_timeout_secs: u64,
+    pub build_timeout_secs: u64,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
                 base_domain: limits.base_domain,
                 git_fetch_timeout_secs: limits.git_fetch_timeout_secs,
                 install_timeout_secs: limits.install_timeout_secs,
+                build_timeout_secs: limits.build_timeout_secs,
                 docker,
                 proxy_client,
                 container_ips: Mutex::new(HashMap::new()),
@@ -116,6 +119,10 @@ impl AppState {
 
     pub fn install_timeout_secs(&self) -> u64 {
         self.inner.install_timeout_secs
+    }
+
+    pub fn build_timeout_secs(&self) -> u64 {
+        self.inner.build_timeout_secs
     }
 
     pub fn apps_dir(&self) -> PathBuf {

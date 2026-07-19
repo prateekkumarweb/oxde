@@ -25,6 +25,8 @@ pub enum AppError {
     InvalidPublishDir(String),
     #[error("invalid run config: {0}")]
     InvalidRunConfig(String),
+    #[error("invalid build config: {0}")]
+    InvalidBuildConfig(String),
     #[error("git fetch failed: {0}")]
     Git(String),
     #[error("container failed to start: {0}")]
@@ -59,6 +61,7 @@ impl IntoResponse for AppError {
             | Self::NotGitSourced(_)
             | Self::InvalidPublishDir(_)
             | Self::InvalidRunConfig(_)
+            | Self::InvalidBuildConfig(_)
             | Self::NoContainer(_)
             | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,

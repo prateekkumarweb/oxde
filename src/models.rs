@@ -14,7 +14,10 @@ pub struct App {
 impl App {
     pub const fn run_config(&self) -> Option<&RunConfig> {
         match &self.source {
-            AppSource::Git(git_source) => git_source.run.as_ref(),
+            AppSource::Git(git_source) => match &git_source.mode {
+                GitDeployMode::Run(run) => Some(run),
+                GitDeployMode::Static { .. } | GitDeployMode::Build(_) => None,
+            },
             AppSource::Upload => None,
         }
     }
@@ -34,9 +37,32 @@ pub struct GitSource {
     pub repo_url: String,
     pub branch: String,
     #[serde(default)]
-    pub publish_dir: Option<String>, // static mode; ignored when `run` is set
-    #[serde(default)]
-    pub run: Option<RunConfig>,
+    pub mode: GitDeployMode,
+}
+
+/// The three ways a git-sourced app can be served - exactly one at a time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GitDeployMode {
+    Static {
+        #[serde(default)]
+        publish_dir: Option<String>,
+    },
+    Build(BuildConfig),
+    Run(RunConfig),
+}
+
+impl Default for GitDeployMode {
+    fn default() -> Self {
+        Self::Static { publish_dir: None }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildConfig {
+    pub image: RunImage,
+    pub command: String,
+    pub output_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +118,20 @@ pub fn validate_run_config(run: &RunConfig) -> AppResult<()> {
     Ok(())
 }
 
+pub fn validate_build_config(build: &BuildConfig) -> AppResult<()> {
+    if build.command.trim().is_empty() {
+        return Err(AppError::InvalidBuildConfig(
+            "build command is required".to_string(),
+        ));
+    }
+    if build.output_dir.trim().is_empty() {
+        return Err(AppError::InvalidBuildConfig(
+            "output dir is required".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deployment {
     pub id: String,
@@ -101,9 +141,11 @@ pub struct Deployment {
     pub upload_size_bytes: u64,
     #[serde(default)]
     pub git: Option<GitDeploymentInfo>,
+    #[serde(default)]
+    pub build_info: Option<BuildInfo>,
     /// Deterministic name (`oxde-{app_name}-{deployment_id}`) of the
     /// container backing this deployment when it's run-mode; `None` for
-    /// static/upload deployments.
+    /// static/upload/build deployments.
     #[serde(default)]
     pub container_name: Option<String>,
     /// Defaults to `Ready` on deserialize so deployments written before this
@@ -135,6 +177,12 @@ pub struct GitDeploymentInfo {
     pub branch: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildInfo {
+    pub image: RunImage,
+    pub command: String,
+}
+
 /// Slugs double as directory names and `<name>.<base_domain>` subdomain
 /// labels, so they're restricted to what's safe in both places.
 pub fn validate_slug(name: &str) -> AppResult<()> {
@@ -156,7 +204,7 @@ pub fn validate_slug(name: &str) -> AppResult<()> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{Deployment, DeploymentStatus, GitSource, RunConfig, RunImage};
+    use super::{Deployment, DeploymentStatus, GitDeployMode, GitSource, RunConfig, RunImage};
 
     #[test]
     fn run_image_serializes_snake_case() {
@@ -184,13 +232,16 @@ mod tests {
         let source = GitSource {
             repo_url: "https://example.com/repo.git".to_string(),
             branch: "main".to_string(),
-            publish_dir: Some("dist".to_string()),
-            run: None,
+            mode: GitDeployMode::Static {
+                publish_dir: Some("dist".to_string()),
+            },
         };
         let json = serde_json::to_string(&source).expect("serialize");
         let round_tripped: GitSource = serde_json::from_str(&json).expect("deserialize");
-        assert!(round_tripped.run.is_none());
-        assert_eq!(round_tripped.publish_dir.as_deref(), Some("dist"));
+        assert!(matches!(
+            round_tripped.mode,
+            GitDeployMode::Static { publish_dir: Some(ref dir) } if dir == "dist"
+        ));
     }
 
     #[test]
@@ -198,8 +249,7 @@ mod tests {
         let source = GitSource {
             repo_url: "https://example.com/repo.git".to_string(),
             branch: "main".to_string(),
-            publish_dir: None,
-            run: Some(RunConfig {
+            mode: GitDeployMode::Run(RunConfig {
                 image: RunImage::Node24,
                 install_command: Some("npm install".to_string()),
                 start_command: "npm start".to_string(),
@@ -208,20 +258,45 @@ mod tests {
         };
         let json = serde_json::to_string(&source).expect("serialize");
         let round_tripped: GitSource = serde_json::from_str(&json).expect("deserialize");
-        let run = round_tripped.run.expect("run config");
+        let GitDeployMode::Run(run) = round_tripped.mode else {
+            panic!("expected run mode");
+        };
         assert_eq!(run.image, RunImage::Node24);
         assert_eq!(run.container_port, 3000);
         assert_eq!(run.install_command.as_deref(), Some("npm install"));
     }
 
-    /// A `GitSource` written before `run` existed (old `app.json` on disk)
-    /// must still deserialize, defaulting `run` to `None`.
+    /// A `GitSource` written before `mode` existed (old `app.json` on disk,
+    /// implicitly build-less/static with no `publish_dir`) must still
+    /// deserialize.
     #[test]
-    fn git_source_without_run_field_deserializes() {
+    fn git_source_without_mode_field_deserializes() {
         let json = r#"{"repo_url":"https://example.com/repo.git","branch":"main"}"#;
         let source: GitSource = serde_json::from_str(json).expect("deserialize");
-        assert!(source.run.is_none());
-        assert!(source.publish_dir.is_none());
+        assert!(matches!(
+            source.mode,
+            GitDeployMode::Static { publish_dir: None }
+        ));
+    }
+
+    #[test]
+    fn git_source_round_trips_in_build_mode() {
+        let source = GitSource {
+            repo_url: "https://example.com/repo.git".to_string(),
+            branch: "main".to_string(),
+            mode: GitDeployMode::Build(super::BuildConfig {
+                image: RunImage::Node24,
+                command: "npm run build".to_string(),
+                output_dir: "dist".to_string(),
+            }),
+        };
+        let json = serde_json::to_string(&source).expect("serialize");
+        let round_tripped: GitSource = serde_json::from_str(&json).expect("deserialize");
+        let GitDeployMode::Build(build) = round_tripped.mode else {
+            panic!("expected build mode");
+        };
+        assert_eq!(build.image, RunImage::Node24);
+        assert_eq!(build.output_dir, "dist");
     }
 
     /// A `Deployment` written before `container_name` existed (old

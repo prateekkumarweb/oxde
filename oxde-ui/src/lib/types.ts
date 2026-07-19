@@ -7,14 +7,24 @@ export interface RunConfig {
   container_port: number;
 }
 
+export interface BuildConfig {
+  image: RunImage;
+  command: string;
+  output_dir: string;
+}
+
+export type GitDeployMode =
+  | { type: "static"; publish_dir: string | null }
+  | ({ type: "build" } & BuildConfig)
+  | ({ type: "run" } & RunConfig);
+
 export type AppSource =
   | { type: "upload" }
   | {
       type: "git";
       repo_url: string;
       branch: string;
-      publish_dir: string | null;
-      run: RunConfig | null;
+      mode: GitDeployMode;
     };
 
 export interface AppView {
@@ -38,6 +48,7 @@ export interface DeploymentView {
   original_filename: string | null;
   upload_size_bytes: number;
   git: { commit_sha: string; branch: string } | null;
+  build_info: { image: RunImage; command: string } | null;
   container_name: string | null;
   status: DeploymentStatus;
   is_active: boolean;

@@ -6,7 +6,10 @@ use crate::{
     containers,
     error::{AppError, AppResult},
     git_fetch,
-    models::{self, App, AppSource, Deployment, DeploymentStatus, GitDeploymentInfo, GitSource},
+    models::{
+        self, App, AppSource, BuildInfo, Deployment, DeploymentStatus, GitDeployMode,
+        GitDeploymentInfo, GitSource,
+    },
     state::AppState,
 };
 
@@ -24,8 +27,10 @@ pub fn create_app(state: &AppState, name: &str, source: AppSource) -> AppResult<
     models::validate_slug(name)?;
     if let AppSource::Git(ref git_source) = source {
         models::validate_repo_url(&git_source.repo_url)?;
-        if let Some(run) = &git_source.run {
-            models::validate_run_config(run)?;
+        match &git_source.mode {
+            GitDeployMode::Run(run) => models::validate_run_config(run)?,
+            GitDeployMode::Build(build) => models::validate_build_config(build)?,
+            GitDeployMode::Static { .. } => {}
         }
     }
 
@@ -155,6 +160,7 @@ fn stage_deployment(
         original_filename,
         upload_size_bytes,
         git: None,
+        build_info: None,
         container_name: None,
         status: DeploymentStatus::Ready,
     };
@@ -185,9 +191,7 @@ pub fn create_pending_git_deployment(
 
     let now = Timestamp::now();
     let id = format!("{}-{}", now.as_millisecond(), state.next_seq());
-    let container_name = git_source
-        .run
-        .is_some()
+    let container_name = matches!(git_source.mode, GitDeployMode::Run(_))
         .then(|| containers::container_name(app_name, &id));
 
     let deployment = Deployment {
@@ -197,6 +201,7 @@ pub fn create_pending_git_deployment(
         original_filename: None,
         upload_size_bytes: 0,
         git: None,
+        build_info: None,
         container_name,
         status: DeploymentStatus::Pending,
     };
@@ -213,41 +218,56 @@ pub fn create_pending_git_deployment(
     Ok((deployment, git_source))
 }
 
-/// Run mode ignores `publish_dir` and keeps the whole checkout, since the
-/// container needs the full repo, not a served subtree.
-pub fn clone_into_staging(staging: &Path, git_source: &GitSource) -> AppResult<String> {
+/// Clones the checkout but does *not* move it into `staging/files` yet - a
+/// build deploy needs the raw checkout still in place to bind-mount into
+/// the build container before `finish_git_deployment` can resolve its
+/// output dir.
+pub fn clone_repo(
+    staging: &Path,
+    git_source: &GitSource,
+) -> AppResult<(std::path::PathBuf, String)> {
     std::fs::create_dir(staging)?;
     let checkout_dir = staging.join("_checkout");
     let commit_sha =
         git_fetch::clone_shallow(&git_source.repo_url, &git_source.branch, &checkout_dir)?;
-    // Must happen before resolving publish_dir/moving the checkout: if
-    // publish_dir is the repo root (or this is a run-mode deployment, which
-    // uses the whole checkout), .git would otherwise end up inside files/.
     std::fs::remove_dir_all(checkout_dir.join(".git"))?;
-
-    if git_source.run.is_some() {
-        std::fs::rename(&checkout_dir, staging.join("files"))?;
-    } else {
-        let content_root =
-            git_fetch::resolve_publish_dir(&checkout_dir, git_source.publish_dir.as_deref())?;
-        std::fs::rename(&content_root, staging.join("files"))?;
-        std::fs::remove_dir_all(&checkout_dir).ok();
-    }
-
-    Ok(commit_sha)
+    Ok((checkout_dir, commit_sha))
 }
 
-/// Leaves status as `Pending` - the caller flips it to `Ready`
-/// (`mark_git_deployment_ready`) only after activation, so install-command
-/// logs stay attached to this deployment the whole time.
-pub fn stage_git_deployment_files(
+/// Resolves the servable content root - the whole checkout for `Run`, the
+/// build's `output_dir` for `Build` (only valid once the build has run),
+/// `publish_dir` for `Static` - then moves it into place and records the
+/// git/build info. Leaves status as `Pending`; the caller flips it to
+/// `Ready` (`mark_git_deployment_ready`) only after activation, so
+/// install/build-command logs stay attached to this deployment the whole
+/// time.
+pub fn finish_git_deployment(
     state: &AppState,
     staging: &Path,
+    checkout_dir: &Path,
     app_name: &str,
     deployment_id: &str,
     git_source: &GitSource,
     commit_sha: String,
 ) -> AppResult<()> {
+    match &git_source.mode {
+        GitDeployMode::Run(_) => {
+            std::fs::rename(checkout_dir, staging.join("files"))?;
+        }
+        GitDeployMode::Static { publish_dir } => {
+            let content_root =
+                git_fetch::resolve_publish_dir(checkout_dir, publish_dir.as_deref())?;
+            std::fs::rename(&content_root, staging.join("files"))?;
+            std::fs::remove_dir_all(checkout_dir).ok();
+        }
+        GitDeployMode::Build(build) => {
+            let content_root =
+                git_fetch::resolve_publish_dir(checkout_dir, Some(&build.output_dir))?;
+            std::fs::rename(&content_root, staging.join("files"))?;
+            std::fs::remove_dir_all(checkout_dir).ok();
+        }
+    }
+
     let content_size = dir_size_bytes(&staging.join("files"))?;
     let deployment_dir = state
         .apps_dir()
@@ -261,6 +281,13 @@ pub fn stage_git_deployment_files(
         commit_sha,
         branch: git_source.branch.clone(),
     });
+    deployment.build_info = match &git_source.mode {
+        GitDeployMode::Build(build) => Some(BuildInfo {
+            image: build.image,
+            command: build.command.clone(),
+        }),
+        GitDeployMode::Static { .. } | GitDeployMode::Run(_) => None,
+    };
     deployment.upload_size_bytes = content_size;
     write_json(&deployment_dir.join("deployment.json"), &deployment)?;
     std::fs::remove_dir_all(staging).ok();
@@ -426,7 +453,7 @@ mod tests {
     };
     use crate::{
         error::AppError,
-        models::AppSource,
+        models::{AppSource, DeploymentStatus, GitDeployMode, GitSource},
         state::{AppState, AppStateLimits},
     };
 
@@ -447,6 +474,7 @@ mod tests {
                 base_domain: "localhost".to_string(),
                 git_fetch_timeout_secs: 60,
                 install_timeout_secs: 300,
+                build_timeout_secs: 300,
             },
             // None of these tests exercise container behavior, so this
             // just needs to construct - `connect_with_http` doesn't touch
@@ -617,21 +645,17 @@ mod tests {
         create_app(
             &state,
             "site",
-            AppSource::Git(crate::models::GitSource {
+            AppSource::Git(GitSource {
                 repo_url: "https://example.com/repo.git".to_string(),
                 branch: "main".to_string(),
-                publish_dir: None,
-                run: None,
+                mode: GitDeployMode::default(),
             }),
         )
         .expect("create_app");
 
         let (first, _) =
             create_pending_git_deployment(&state, "site").expect("first pending deploy");
-        assert!(matches!(
-            first.status,
-            crate::models::DeploymentStatus::Pending
-        ));
+        assert!(matches!(first.status, DeploymentStatus::Pending));
 
         let err = create_pending_git_deployment(&state, "site")
             .expect_err("a second deploy while one is pending must be rejected");
