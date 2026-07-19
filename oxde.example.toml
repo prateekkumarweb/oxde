@@ -1,7 +1,28 @@
+# Where apps/deployments are stored on disk.
 data_dir = "./data"
+
+# The single admin credential (HTTP Basic Auth) gating the dashboard and API.
 admin_username = "admin"
 admin_password = "change-me"
+
+# Apps are served at <app-name>.<base_domain>. Use "localhost" for local
+# development (myapp.localhost:3000 resolves to loopback with no
+# /etc/hosts editing needed).
 base_domain = "example.com"
 
-# max_upload_bytes = 209715200
-# max_uncompressed_bytes = 1073741824
+# Everything below is optional; values shown are the defaults.
+
+# Max accepted size of an uploaded deployment zip, in bytes.
+# max_upload_bytes = 209715200 # 200MB
+
+# Max accepted size of a zip's uncompressed contents, in bytes.
+# max_uncompressed_bytes = 1073741824 # 1GB
+
+# How long a git fetch may run before being cancelled, in seconds.
+# git_fetch_timeout_secs = 60
+
+# How long a run-mode install command may run before being cancelled, in seconds.
+# install_timeout_secs = 300
+
+# How long a build command may run before being cancelled, in seconds.
+# build_timeout_secs = 300
