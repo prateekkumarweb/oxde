@@ -45,6 +45,20 @@ cargo +nightly fmt      # format
 cargo clippy            # lint
 ```
 
+## Database migrations (`oxde-db/`)
+
+`oxde-db/` holds OxDe's SQLite-compatible database (`data_dir/oxde.db`, via `turso`/`toasty`) and its schema, defined in `oxde-db/src/models.rs`. Schema changes go through migrations rather than being pushed wholesale on every startup.
+
+OxDe applies any pending migration automatically on startup - there's nothing to run by hand to bring an existing `data_dir/oxde.db` up to date.
+
+When you change a model in `oxde-db/src/models.rs`, generate the migration for it and commit the result:
+
+```sh
+cargo xtask migration generate --name describe_the_change
+```
+
+This diffs the new model shape against the last generated snapshot and writes the SQL migration, an updated schema snapshot, and a history entry under `toasty/` (`toasty/migrations/`, `toasty/snapshots/`, `toasty/history.toml`) - check all three into version control alongside the model change. `cargo xtask migration apply` runs the same apply step OxDe runs at startup, useful for testing a migration without starting the server; `cargo xtask migration --help` lists the rest (`drop`, `reset`, `snapshot`), inherited from [`toasty-cli`](https://tokio-rs.github.io/toasty/0.8.0/guide/schema-management.html).
+
 ## Dashboard frontend (`oxde-ui/`)
 
 `oxde-ui/` is a React 19 + TypeScript + Vite+ project with its own `package.json`/lockfile, not part of the Cargo workspace. `xtask/` (a real Cargo workspace member, aliased as `cargo xtask` via `.cargo/config.toml`) is what wires it into the Rust build above so it can't be forgotten.

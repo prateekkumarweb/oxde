@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
-import type { AppSource, EnvVar } from "@/lib/types";
+import type { AppPermission, AppSource, EnvVar } from "@/lib/types";
 
 type Api = ReturnType<typeof useApi>;
 
@@ -9,6 +9,7 @@ const appKey = (name: string) => ["apps", name] as const;
 const deploymentsKey = (name: string) => ["apps", name, "deployments"] as const;
 const deploymentStatsKey = (name: string, id: string) =>
   ["apps", name, "deployments", id, "stats"] as const;
+const usersKey = () => ["users"] as const;
 
 function appsOptions(api: Api) {
   return queryOptions({ queryKey: appsKey(), queryFn: api.listApps });
@@ -67,6 +68,65 @@ export function useUpdateAppEnvVars(name: string) {
   return useMutation({
     mutationFn: (envVars: EnvVar[]) => api.updateAppEnvVars(name, envVars),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(name) }),
+  });
+}
+
+export function useUpdateAppPermissions(name: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (permissions: AppPermission[]) => api.updateAppPermissions(name, permissions),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(name) }),
+  });
+}
+
+function usersOptions(api: Api) {
+  return queryOptions({ queryKey: usersKey(), queryFn: api.listUsers });
+}
+
+export function useUsers() {
+  return useQuery(usersOptions(useApi()));
+}
+
+export function useCreateUser() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { username: string; password: string; role: string }) =>
+      api.createUser(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey() }),
+  });
+}
+
+export function useUpdateUser() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ username, ...input }: { username: string; role?: string; password?: string }) =>
+      api.updateUser(username, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey() }),
+  });
+}
+
+export function useDeleteUser() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (username: string) => api.deleteUser(username),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey() }),
+  });
+}
+
+export function useChangeOwnPassword() {
+  const api = useApi();
+  return useMutation({
+    mutationFn: ({
+      currentPassword,
+      newPassword,
+    }: {
+      currentPassword: string;
+      newPassword: string;
+    }) => api.changeOwnPassword(currentPassword, newPassword),
   });
 }
 

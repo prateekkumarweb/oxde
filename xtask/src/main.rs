@@ -14,6 +14,10 @@ fn main() -> ExitCode {
         return usage();
     };
 
+    if task == "migration" {
+        return migration(args.collect());
+    }
+
     let ok = match task.as_str() {
         "gen-types" => gen_types(),
         "build-ui" => gen_types() && build_ui(),
@@ -31,13 +35,50 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: cargo xtask <gen-types|build-ui|build> [args...]");
+    eprintln!("usage: cargo xtask <gen-types|build-ui|build|migration> [args...]");
     eprintln!("  gen-types       regenerate oxde-ui/src/lib/generated from #[ts(export)] types");
     eprintln!(
         "  build-ui        gen-types, then build oxde-ui/dist via Vite+ (`vp install && vp build`)"
     );
     eprintln!("  build [args]    build-ui, then `cargo build [args]`");
+    eprintln!(
+        "  migration <generate --name X|apply|drop|reset|snapshot>   database schema migrations (oxde-db/toasty-cli)"
+    );
     ExitCode::FAILURE
+}
+
+/// Runs a `toasty-cli` migration subcommand against the database at
+/// `./data/oxde.db` - the same file `oxde` itself opens by default (see
+/// `oxde.toml`'s `data_dir`). `generate` only reads the schema compiled
+/// from `oxde_db::models`, so it's safe to run against that file even
+/// though it's also the real data `OxDe` serves from.
+fn migration(args: Vec<String>) -> ExitCode {
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("failed to start tokio runtime: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match runtime.block_on(run_migration_cli(args)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run_migration_cli(args: Vec<String>) -> anyhow::Result<()> {
+    let data_dir = Path::new("data");
+    std::fs::create_dir_all(data_dir)?;
+    let db = oxde_db::connect(data_dir).await?;
+
+    let cli_args = ["oxde".to_string(), "migration".to_string()]
+        .into_iter()
+        .chain(args);
+    toasty_cli::ToastyCli::new(db).parse_from(cli_args).await
 }
 
 fn gen_types() -> bool {

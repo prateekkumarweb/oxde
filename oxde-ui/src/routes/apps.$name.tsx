@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DeploymentLogs } from "@/components/deployment-logs";
 import { DeploymentStats } from "@/components/deployment-stats";
 import { EnvVarEditor } from "@/components/env-var-editor";
+import { PermissionsEditor } from "@/components/permissions-editor";
 import {
   Table,
   TableBody,
@@ -22,10 +23,11 @@ import {
   useDeployFromGit,
   useDeployments,
   useUpdateAppEnvVars,
+  useUpdateAppPermissions,
   useUploadDeployment,
 } from "@/lib/queries";
-import { ApiError } from "@/lib/auth";
-import type { EnvVar, RunImage } from "@/lib/types";
+import { ApiError, useAuth } from "@/lib/auth";
+import type { AppPermission, EnvVar, RunImage } from "@/lib/types";
 
 export const Route = createFileRoute("/apps/$name")({
   component: AppDetail,
@@ -61,10 +63,13 @@ function AppDetail() {
   const activateDeployment = useActivateDeployment(name);
   const deleteDeployment = useDeleteDeployment(name);
   const updateAppEnvVars = useUpdateAppEnvVars(name);
+  const updateAppPermissions = useUpdateAppPermissions(name);
+  const { user } = useAuth();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [localEnvVars, setLocalEnvVars] = useState<EnvVar[] | null>(null);
+  const [localPermissions, setLocalPermissions] = useState<AppPermission[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const busy =
@@ -124,6 +129,16 @@ function AppDetail() {
     });
   }
 
+  async function handleSavePermissions(permissions: AppPermission[]) {
+    const trimmed = permissions
+      .map((grant) => ({ ...grant, username: grant.username.trim() }))
+      .filter((grant) => grant.username !== "");
+    await runAction(async () => {
+      await updateAppPermissions.mutateAsync(trimmed);
+      setLocalPermissions(null);
+    });
+  }
+
   const error =
     actionError ??
     (appError instanceof ApiError ? appError.message : appError && "Failed to load app");
@@ -143,6 +158,8 @@ function AppDetail() {
   const publishDir = gitSource?.mode.type === "static" ? gitSource.mode.publish_dir : null;
   const envVars = localEnvVars ?? app.env_vars;
   const envVarsDirty = localEnvVars !== null;
+  const permissions = localPermissions ?? app.permissions;
+  const permissionsDirty = localPermissions !== null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -266,6 +283,24 @@ function AppDetail() {
             <Button
               onClick={() => handleSaveEnvVars(envVars)}
               disabled={busy || updateAppEnvVars.isPending || !envVarsDirty}
+              className="self-start"
+            >
+              Save
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {user?.role === "admin" && (
+        <Card className="max-w-2xl">
+          <CardHeader>
+            <CardTitle>Collaborators</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <PermissionsEditor permissions={permissions} onChange={setLocalPermissions} />
+            <Button
+              onClick={() => handleSavePermissions(permissions)}
+              disabled={busy || updateAppPermissions.isPending || !permissionsDirty}
               className="self-start"
             >
               Save

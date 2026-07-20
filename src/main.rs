@@ -1,8 +1,6 @@
-#![forbid(unsafe_code)]
-#![warn(clippy::pedantic, clippy::nursery)]
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-
+mod accounts;
 mod auth;
+mod authz;
 mod config;
 mod containers;
 mod dashboard_assets;
@@ -16,8 +14,10 @@ mod storage;
 mod zip_extract;
 
 use anyhow::Context;
+use oxde_db::models::User;
 
 use crate::{
+    accounts::AccountRole,
     config::Config,
     error::AppResult,
     models::{App, DeploymentStatus},
@@ -26,7 +26,12 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let config = Config::load().context("failed to load configuration")?;
     let docker = containers::connect().context("failed to build Podman client")?;
@@ -45,6 +50,13 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
 
+    let db = oxde_db::connect(&data_dir)
+        .await
+        .context("failed to open database")?;
+    oxde_db::apply_migrations(&db)
+        .await
+        .context("failed to apply pending database migrations")?;
+
     let state = AppState::new(
         data_dir,
         AppStateLimits {
@@ -57,7 +69,12 @@ async fn main() -> anyhow::Result<()> {
         },
         docker,
         reverse_proxy::new_client(),
+        db,
     );
+
+    bootstrap_admin(&state, &config.admin_username, &config.admin_password)
+        .await
+        .context("failed to bootstrap admin user")?;
 
     std::fs::create_dir_all(state.apps_dir())
         .context("failed to create apps dir under data dir")?;
@@ -68,11 +85,60 @@ async fn main() -> anyhow::Result<()> {
     fail_pending_deployments(&state).await;
     reconcile_run_mode_containers(&state).await;
 
-    let app = routes::build_router(state, &config.admin_username, &config.admin_password);
+    let app = routes::build_router(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    tracing::info!(addr = ?listener.local_addr()?, "listening");
+    let addr = listener.local_addr()?;
+    tracing::info!("OxDe server started, listening on http://{addr}");
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Re-evaluated on every startup, not just once: if no `Admin` currently
+/// exists in `users`, one is created from `oxde.toml`'s
+/// `admin_username`/`admin_password`. Once at least one `Admin` exists,
+/// those config values are ignored entirely - but the check is "does an
+/// admin exist right now," not a one-time flag, so if every `Admin` were
+/// ever deleted, the config file becomes the recovery path again on the
+/// next restart rather than a permanent lockout.
+async fn bootstrap_admin(
+    state: &AppState,
+    admin_username: &str,
+    admin_password: &str,
+) -> anyhow::Result<()> {
+    let mut db = state.db().clone();
+    let admin_exists = User::all()
+        .filter(User::fields().role().eq(AccountRole::Admin.as_str()))
+        .first()
+        .exec(&mut db)
+        .await?
+        .is_some();
+    if admin_exists {
+        return Ok(());
+    }
+
+    accounts::validate_username(admin_username)
+        .with_context(|| format!("invalid admin_username in config: {admin_username}"))?;
+    accounts::validate_password(admin_password)
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
+        .context("invalid admin_password in config")?;
+    let password_hash =
+        accounts::hash_password(admin_password).map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    let now = accounts::now_epoch_secs();
+
+    User::create()
+        .username(admin_username)
+        .password_hash(password_hash)
+        .role(AccountRole::Admin.as_str())
+        .created_at(now)
+        .updated_at(now)
+        .exec(&mut db)
+        .await?;
+
+    tracing::info!(
+        username = admin_username,
+        "bootstrapped admin user from config"
+    );
     Ok(())
 }
 

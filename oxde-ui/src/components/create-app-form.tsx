@@ -23,6 +23,14 @@ const SOURCES = ["upload", "git"] as const satisfies readonly Source[];
 const GIT_MODES = ["static", "build", "run"] as const satisfies readonly GitMode[];
 const RUN_IMAGES = ["node24", "python314"] as const satisfies readonly RunImage[];
 
+const SOURCE_LABELS: Record<Source, string> = { upload: "Upload zip", git: "Git repo" };
+const GIT_MODE_LABELS: Record<GitMode, string> = {
+  static: "Static (repo files are already the site)",
+  build: "Build (run a command, serve its output)",
+  run: "Run (long-lived process, not static files)",
+};
+const RUN_IMAGE_LABELS: Record<RunImage, string> = { node24: "node:24", python314: "python:3.14" };
+
 export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const createApp = useCreateApp();
   const [name, setName] = useState("");
@@ -128,7 +136,9 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
               onValueChange={(value) => isOneOf(SOURCES, value) && setSource(value)}
             >
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>
+                  {(value: string) => (isOneOf(SOURCES, value) ? SOURCE_LABELS[value] : value)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="upload">Upload zip</SelectItem>
@@ -166,7 +176,11 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                   onValueChange={(value) => isOneOf(GIT_MODES, value) && setGitMode(value)}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>
+                      {(value: string) =>
+                        isOneOf(GIT_MODES, value) ? GIT_MODE_LABELS[value] : value
+                      }
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="static">Static (repo files are already the site)</SelectItem>
@@ -197,7 +211,11 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                       onValueChange={(value) => isOneOf(RUN_IMAGES, value) && setBuildImage(value)}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value: string) =>
+                            isOneOf(RUN_IMAGES, value) ? RUN_IMAGE_LABELS[value] : value
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="node24">node:24</SelectItem>
@@ -237,7 +255,11 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                       onValueChange={(value) => isOneOf(RUN_IMAGES, value) && setRunImage(value)}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value: string) =>
+                            isOneOf(RUN_IMAGES, value) ? RUN_IMAGE_LABELS[value] : value
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="node24">node:24</SelectItem>

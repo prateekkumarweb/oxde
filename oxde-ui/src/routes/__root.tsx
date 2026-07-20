@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 
 const RootLayout = () => {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, user } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
   return (
@@ -15,11 +15,23 @@ const RootLayout = () => {
       {isAuthenticated ? (
         <div className="min-h-svh">
           <header className="flex items-center justify-between border-b px-6 py-3">
-            <Link to="/" className="flex items-center gap-2 font-heading text-lg font-semibold">
-              <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-5" />
-              OxDe
-            </Link>
+            <div className="flex items-center gap-6">
+              <Link to="/" className="flex items-center gap-2 font-heading text-lg font-semibold">
+                <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-5" />
+                OxDe
+              </Link>
+              {user?.role === "admin" && (
+                <Link
+                  to="/users"
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                  activeProps={{ className: "text-foreground" }}
+                >
+                  Users
+                </Link>
+              )}
+            </div>
             <div className="flex items-center gap-2">
+              {user && <span className="text-sm text-muted-foreground">{user.username}</span>}
               <Button
                 variant="ghost"
                 size="icon-sm"

@@ -1,12 +1,14 @@
 import { useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import type {
+  AppPermission,
   AppSource,
   AppView,
   ContainerStats,
   DeploymentView,
   EnvVar,
   RunConfig,
+  UserView,
 } from "@/lib/types";
 
 interface CreateAppInput {
@@ -15,12 +17,29 @@ interface CreateAppInput {
   env_vars?: EnvVar[];
 }
 
+interface CreateUserInput {
+  username: string;
+  password: string;
+  role: string;
+}
+
+interface UpdateUserInput {
+  role?: string;
+  password?: string;
+}
+
 interface Api {
   listApps: () => Promise<AppView[]>;
   createApp: (input: CreateAppInput) => Promise<AppView>;
   getApp: (name: string) => Promise<AppView>;
   deleteApp: (name: string) => Promise<void>;
   updateAppEnvVars: (name: string, envVars: EnvVar[]) => Promise<AppView>;
+  updateAppPermissions: (name: string, permissions: AppPermission[]) => Promise<AppView>;
+  listUsers: () => Promise<UserView[]>;
+  createUser: (input: CreateUserInput) => Promise<UserView>;
+  updateUser: (username: string, input: UpdateUserInput) => Promise<UserView>;
+  deleteUser: (username: string) => Promise<void>;
+  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
   listDeployments: (appName: string) => Promise<DeploymentView[]>;
   uploadDeployment: (appName: string, file: File) => Promise<DeploymentView>;
   deployFromGit: (appName: string) => Promise<DeploymentView>;
@@ -57,6 +76,42 @@ export function useApi(): Api {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ env_vars: envVars }),
+        }),
+
+      updateAppPermissions: (name, permissions) =>
+        request(`/apps/${encodeURIComponent(name)}/permissions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ permissions }),
+        }),
+
+      listUsers: () => request("/users"),
+
+      createUser: (input) =>
+        request("/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+
+      updateUser: (username, input) =>
+        request(`/users/${encodeURIComponent(username)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+
+      deleteUser: (username) =>
+        request(`/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
+
+      changeOwnPassword: (currentPassword, newPassword) =>
+        request("/users/me/password", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            current_password: currentPassword,
+            new_password: newPassword,
+          }),
         }),
 
       listDeployments: (appName) => request(`/apps/${encodeURIComponent(appName)}/deployments`),
@@ -99,4 +154,12 @@ export function useApi(): Api {
   );
 }
 
-export type { AppSource, AppView, ContainerStats, DeploymentView, RunConfig };
+export type {
+  AppPermission,
+  AppSource,
+  AppView,
+  ContainerStats,
+  DeploymentView,
+  RunConfig,
+  UserView,
+};

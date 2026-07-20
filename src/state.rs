@@ -35,6 +35,8 @@ struct Inner {
     docker: Docker,
     proxy_client: ProxyClient,
     container_ips: Mutex<HashMap<String, (String, Instant)>>,
+    db: toasty::Db,
+    sessions: Mutex<HashMap<String, crate::auth::Session>>,
 }
 
 /// Scalar config `AppState::new` bundles a plain constructor's worth of
@@ -54,6 +56,7 @@ impl AppState {
         limits: AppStateLimits,
         docker: Docker,
         proxy_client: ProxyClient,
+        db: toasty::Db,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -69,8 +72,18 @@ impl AppState {
                 docker,
                 proxy_client,
                 container_ips: Mutex::new(HashMap::new()),
+                db,
+                sessions: Mutex::new(HashMap::new()),
             }),
         }
+    }
+
+    pub fn db(&self) -> &toasty::Db {
+        &self.inner.db
+    }
+
+    pub fn sessions(&self) -> &Mutex<HashMap<String, crate::auth::Session>> {
+        &self.inner.sessions
     }
 
     pub fn docker(&self) -> &Docker {

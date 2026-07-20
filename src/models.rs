@@ -14,6 +14,37 @@ pub struct App {
     /// Doesn't apply to static-mode apps, which run no commands at all.
     #[serde(default)]
     pub env_vars: Vec<EnvVar>,
+    /// Per-`Member` access grants. `Admin` accounts ignore this entirely
+    /// (always full access); a `Member` gets exactly what's listed here.
+    #[serde(default)]
+    pub permissions: Vec<AppPermission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AppPermission {
+    pub username: String,
+    pub level: PermissionLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PermissionLevel {
+    /// Read app config, deployments, logs, stats.
+    Read,
+    /// Everything `Read` allows, plus deploy, activate, env vars, delete.
+    Write,
+}
+
+impl PermissionLevel {
+    /// `Write` satisfies a `Read` requirement; `Read` does not satisfy `Write`.
+    const fn satisfies(self, required: Self) -> bool {
+        matches!(
+            (self, required),
+            (Self::Write, _) | (Self::Read, Self::Read)
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -24,6 +55,14 @@ pub struct EnvVar {
 }
 
 impl App {
+    /// Whether `username` (a `Member`, not `Admin` - callers check that
+    /// separately) has at least `required` access to this app.
+    pub fn has_permission(&self, username: &str, required: PermissionLevel) -> bool {
+        self.permissions
+            .iter()
+            .any(|grant| grant.username == username && grant.level.satisfies(required))
+    }
+
     pub const fn run_config(&self) -> Option<&RunConfig> {
         match &self.source {
             AppSource::Git(git_source) => match &git_source.mode {

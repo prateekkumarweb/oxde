@@ -19,9 +19,7 @@ export function LoginScreen() {
     try {
       await login(username, password);
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 401 ? "Invalid credentials" : "Login failed",
-      );
+      setError(err instanceof ApiError ? err.message : "Login failed");
     } finally {
       setPending(false);
     }

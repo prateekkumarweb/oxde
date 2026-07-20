@@ -1,11 +1,12 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    http::{StatusCode, header},
-    response::IntoResponse,
+    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State},
+    http::{Method, StatusCode, header},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -13,37 +14,72 @@ use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
 
 use crate::{
-    containers,
+    accounts::AccountRole,
+    auth::CurrentUser,
+    authz, containers,
     error::{AppError, AppResult},
-    models::{AppSource, Deployment, DeploymentStatus, EnvVar, GitDeployMode, GitSource},
+    models::{
+        self, AppPermission, AppSource, Deployment, DeploymentStatus, EnvVar, GitDeployMode,
+        GitSource,
+    },
     state::AppState,
     storage,
 };
 
-pub fn router(max_upload_bytes: u64) -> Router<AppState> {
-    Router::new()
-        .route("/apps", get(list_apps).post(create_app))
+pub fn router(state: &AppState) -> Router<AppState> {
+    let app_scoped = Router::new()
         .route(
-            "/apps/{name}",
+            "/",
             get(get_app).delete(delete_app).patch(update_app_env_vars),
         )
+        .route("/permissions", post(update_app_permissions_endpoint))
         .route(
-            "/apps/{name}/deployments",
+            "/deployments",
             post(create_deployment)
-                .layer(DefaultBodyLimit::max(usize_from_u64(max_upload_bytes)))
+                .layer(DefaultBodyLimit::max(usize_from_u64(
+                    state.max_upload_bytes(),
+                )))
                 .get(list_deployments),
         )
-        .route("/apps/{name}/deployments/{id}", delete(delete_deployment))
-        .route(
-            "/apps/{name}/deployments/{id}/activate",
-            post(activate_deployment),
-        )
-        .route(
-            "/apps/{name}/deployments/git",
-            post(create_git_deployment_endpoint),
-        )
-        .route("/apps/{name}/deployments/{id}/logs", get(deployment_logs))
-        .route("/apps/{name}/deployments/{id}/stats", get(deployment_stats))
+        .route("/deployments/{id}", delete(delete_deployment))
+        .route("/deployments/{id}/activate", post(activate_deployment))
+        .route("/deployments/git", post(create_git_deployment_endpoint))
+        .route("/deployments/{id}/logs", get(deployment_logs))
+        .route("/deployments/{id}/stats", get(deployment_stats))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            enforce_app_access,
+        ));
+
+    Router::new()
+        .route("/apps", get(list_apps).post(create_app))
+        .nest("/apps/{name}", app_scoped)
+}
+
+/// Gates every `/apps/{name}/...` route on the requesting user's per-app
+/// permission: `Admin` always passes, a `Member` needs a matching
+/// `AppPermission` at `Read` (GET/HEAD) or `Write` (everything else).
+/// Applied once here rather than threading `CurrentUser` through every
+/// handler below.
+async fn enforce_app_access(
+    State(state): State<AppState>,
+    Path(params): Path<HashMap<String, String>>,
+    current_user: CurrentUser,
+    method: Method,
+    request: Request,
+    next: Next,
+) -> AppResult<Response> {
+    let app_name = params
+        .get("name")
+        .ok_or_else(|| AppError::AppNotFound(String::new()))?;
+    let app = storage::get_app(&state, app_name)?;
+    let required = if method == Method::GET || method == Method::HEAD {
+        models::PermissionLevel::Read
+    } else {
+        models::PermissionLevel::Write
+    };
+    authz::check_app_permission(&current_user, &app, required)?;
+    Ok(next.run(request).await)
 }
 
 /// `App` plus the currently active deployment id, derived at read time from
@@ -56,6 +92,7 @@ pub struct AppView {
     pub(crate) active_deployment_id: Option<String>,
     pub(crate) source: AppSource,
     pub(crate) env_vars: Vec<EnvVar>,
+    pub(crate) permissions: Vec<AppPermission>,
 }
 
 pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
@@ -66,6 +103,7 @@ pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
         active_deployment_id,
         source: app.source,
         env_vars: app.env_vars,
+        permissions: app.permissions,
     }
 }
 
@@ -131,9 +169,21 @@ struct UpdateAppEnvVarsRequest {
     env_vars: Vec<EnvVar>,
 }
 
-async fn list_apps(State(state): State<AppState>) -> AppResult<Json<Vec<AppView>>> {
+#[derive(Deserialize)]
+struct UpdateAppPermissionsRequest {
+    permissions: Vec<AppPermission>,
+}
+
+async fn list_apps(
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+) -> AppResult<Json<Vec<AppView>>> {
     let views = storage::list_apps(&state)?
         .into_iter()
+        .filter(|app| {
+            matches!(current_user.role, AccountRole::Admin)
+                || app.has_permission(&current_user.username, models::PermissionLevel::Read)
+        })
         .map(|app| app_view(&state, app))
         .collect();
     Ok(Json(views))
@@ -141,9 +191,27 @@ async fn list_apps(State(state): State<AppState>) -> AppResult<Json<Vec<AppView>
 
 async fn create_app(
     State(state): State<AppState>,
+    current_user: CurrentUser,
     Json(body): Json<CreateAppRequest>,
 ) -> AppResult<(StatusCode, Json<AppView>)> {
     let app = storage::create_app(&state, &body.name, body.source, body.env_vars)?;
+    // An `Admin` doesn't need an explicit grant (always full access), but a
+    // `Member` would otherwise be immediately locked out of what they made.
+    // TODO: this is a second, non-atomic write on top of `create_app`'s -
+    // a crash between the two leaves the app on disk with no grant for its
+    // creator. Fold into a single atomic write once app permissions move
+    // into the DB alongside `users`.
+    let app = if matches!(current_user.role, AccountRole::Member) {
+        storage::add_app_permission(
+            &state,
+            &app.name,
+            &current_user.username,
+            models::PermissionLevel::Write,
+        )?;
+        storage::get_app(&state, &app.name)?
+    } else {
+        app
+    };
     Ok((StatusCode::CREATED, Json(app_view(&state, app))))
 }
 
@@ -161,6 +229,18 @@ async fn update_app_env_vars(
     Json(body): Json<UpdateAppEnvVarsRequest>,
 ) -> AppResult<Json<AppView>> {
     let app = storage::update_app_env_vars(&state, &name, body.env_vars)?;
+    Ok(Json(app_view(&state, app)))
+}
+
+/// Anyone with `Write` on the app (not just `Admin`) can manage who else
+/// has access - project-level collaborator management, not restricted to
+/// the account-level `Admin` role.
+async fn update_app_permissions_endpoint(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<UpdateAppPermissionsRequest>,
+) -> AppResult<Json<AppView>> {
+    let app = storage::update_app_permissions(&state, &name, body.permissions)?;
     Ok(Json(app_view(&state, app)))
 }
 

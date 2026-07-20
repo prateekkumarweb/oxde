@@ -49,6 +49,7 @@ pub fn create_app(
         created_at: Timestamp::now(),
         source,
         env_vars,
+        permissions: Vec::new(),
     };
     write_json(&staging.join("app.json"), &app)?;
 
@@ -109,6 +110,48 @@ pub fn update_app_env_vars(
     let guard = state.write_lock();
     let mut app: App = read_json(&path)?;
     app.env_vars = env_vars;
+    write_json(&path, &app)?;
+    drop(guard);
+    Ok(app)
+}
+
+/// Grants `username` `level` access to `app_name` - used to give a
+/// `Member` who creates an app `Write` access to what they just made.
+pub fn add_app_permission(
+    state: &AppState,
+    app_name: &str,
+    username: &str,
+    level: models::PermissionLevel,
+) -> AppResult<()> {
+    let path = state.apps_dir().join(app_name).join("app.json");
+    if !path.is_file() {
+        return Err(AppError::AppNotFound(app_name.to_string()));
+    }
+    let guard = state.write_lock();
+    let mut app: App = read_json(&path)?;
+    app.permissions.push(models::AppPermission {
+        username: username.to_string(),
+        level,
+    });
+    write_json(&path, &app)?;
+    drop(guard);
+    Ok(())
+}
+
+/// Replaces the full permissions list (not a merge) - the same
+/// replace-wholesale pattern as `update_app_env_vars`.
+pub fn update_app_permissions(
+    state: &AppState,
+    name: &str,
+    permissions: Vec<models::AppPermission>,
+) -> AppResult<App> {
+    let path = state.apps_dir().join(name).join("app.json");
+    if !path.is_file() {
+        return Err(AppError::AppNotFound(name.to_string()));
+    }
+    let guard = state.write_lock();
+    let mut app: App = read_json(&path)?;
+    app.permissions = permissions;
     write_json(&path, &app)?;
     drop(guard);
     Ok(app)
@@ -492,6 +535,17 @@ mod tests {
         ));
         std::fs::create_dir_all(dir.join("apps")).expect("create apps dir");
         std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
+        let db = tokio::runtime::Runtime::new()
+            .expect("build test runtime")
+            .block_on(async {
+                let db = oxde_db::connect(&dir)
+                    .await
+                    .expect("connect test accounts database");
+                oxde_db::apply_migrations(&db)
+                    .await
+                    .expect("apply test accounts database migrations");
+                db
+            });
         AppState::new(
             dir,
             AppStateLimits {
@@ -514,6 +568,7 @@ mod tests {
             )
             .expect("build docker client"),
             crate::reverse_proxy::new_client(),
+            db,
         )
     }
 
