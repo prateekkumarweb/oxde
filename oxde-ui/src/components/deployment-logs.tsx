@@ -39,6 +39,7 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
         }
         const decoder = new TextDecoder();
         while (true) {
+          // eslint-disable-next-line no-await-in-loop -- sequential stream reads, nothing to parallelize
           const { done, value } = await reader.read();
           if (done) {
             break;

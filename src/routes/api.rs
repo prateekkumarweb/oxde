@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
+use ts_rs::TS;
 
 use crate::{
     containers,
@@ -47,7 +48,8 @@ pub fn router(max_upload_bytes: u64) -> Router<AppState> {
 
 /// `App` plus the currently active deployment id, derived at read time from
 /// the `active` symlink rather than stored in `app.json`.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct AppView {
     pub(crate) name: String,
     pub(crate) created_at: jiff::Timestamp,
@@ -74,7 +76,8 @@ pub fn usize_from_u64(value: u64) -> usize {
 /// `Deployment` plus derived, request-time-only fields: whether it's the
 /// active one, and (for run-mode deployments) the backing container's
 /// current state.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct DeploymentView {
     #[serde(flatten)]
     pub(crate) deployment: Deployment,
@@ -82,8 +85,9 @@ pub struct DeploymentView {
     pub(crate) container_status: Option<ContainerStatus>,
 }
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum ContainerStatus {
     Running,
     Stopped,

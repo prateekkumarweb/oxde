@@ -17,6 +17,7 @@ use bollard::{
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::{
     error::{AppError, AppResult},
@@ -387,7 +388,8 @@ fn log_output_bytes(output: LogOutput) -> Bytes {
     }
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone, Copy, TS)]
+#[ts(export)]
 pub struct ContainerStats {
     pub cpu_percent: f64,
     pub memory_usage_bytes: u64,

@@ -25,7 +25,10 @@ async function doRequest<T>(authHeader: string, path: string, init?: RequestInit
   if (!response.ok) {
     throw new ApiError(response.status, body || response.statusText);
   }
-  return (body ? JSON.parse(body) : undefined) as T;
+  const parsed: unknown = body ? JSON.parse(body) : undefined;
+  // T is ts-rs-generated from the Rust response struct; trusted, not verifiable at runtime here.
+  // eslint-disable-next-line no-unsafe-type-assertion
+  return parsed as T;
 }
 
 interface AuthContextValue {

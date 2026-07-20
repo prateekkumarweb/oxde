@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::error::{AppError, AppResult};
 
@@ -15,7 +16,8 @@ pub struct App {
     pub env_vars: Vec<EnvVar>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
@@ -33,16 +35,18 @@ impl App {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[derive(Default)]
+#[ts(export)]
 pub enum AppSource {
     #[default]
     Upload,
     Git(GitSource),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct GitSource {
     pub repo_url: String,
     pub branch: String,
@@ -51,8 +55,9 @@ pub struct GitSource {
 }
 
 /// The three ways a git-sourced app can be served - exactly one at a time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
 pub enum GitDeployMode {
     Static {
         #[serde(default)]
@@ -68,14 +73,16 @@ impl Default for GitDeployMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BuildConfig {
     pub image: RunImage,
     pub command: String,
     pub output_dir: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct RunConfig {
     pub image: RunImage,
     #[serde(default)]
@@ -84,8 +91,9 @@ pub struct RunConfig {
     pub container_port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum RunImage {
     Node24,
     Python314,
@@ -161,7 +169,7 @@ pub fn validate_build_config(build: &BuildConfig) -> AppResult<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Deployment {
     pub id: String,
     pub app: String,
@@ -186,8 +194,9 @@ pub struct Deployment {
 /// Every deployment starts `Ready` except an in-flight git deploy, which
 /// starts `Pending` and is only visible as a record (no `files/` yet) so a
 /// client can attach to its logs before it finishes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
+#[ts(export)]
 pub enum DeploymentStatus {
     Pending,
     Ready,
@@ -200,13 +209,15 @@ impl DeploymentStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct GitDeploymentInfo {
     pub commit_sha: String,
     pub branch: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct BuildInfo {
     pub image: RunImage,
     pub command: String,

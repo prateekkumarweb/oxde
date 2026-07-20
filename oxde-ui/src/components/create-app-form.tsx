@@ -14,13 +14,19 @@ import { useCreateApp } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
 import { EnvVarEditor } from "@/components/env-var-editor";
 import type { AppSource, EnvVar, GitDeployMode, RunImage } from "@/lib/types";
+import { isOneOf } from "@/lib/utils";
 
 type GitMode = GitDeployMode["type"];
+type Source = "upload" | "git";
+
+const SOURCES = ["upload", "git"] as const satisfies readonly Source[];
+const GIT_MODES = ["static", "build", "run"] as const satisfies readonly GitMode[];
+const RUN_IMAGES = ["node24", "python314"] as const satisfies readonly RunImage[];
 
 export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const createApp = useCreateApp();
   const [name, setName] = useState("");
-  const [source, setSource] = useState<"upload" | "git">("upload");
+  const [source, setSource] = useState<Source>("upload");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [gitMode, setGitMode] = useState<GitMode>("static");
@@ -117,7 +123,10 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
 
           <div className="flex flex-col gap-2">
             <Label>Source</Label>
-            <Select value={source} onValueChange={(value) => setSource(value as "upload" | "git")}>
+            <Select
+              value={source}
+              onValueChange={(value) => isOneOf(SOURCES, value) && setSource(value)}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -152,7 +161,10 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
 
               <div className="flex flex-col gap-2">
                 <Label>Deploy mode</Label>
-                <Select value={gitMode} onValueChange={(value) => setGitMode(value as GitMode)}>
+                <Select
+                  value={gitMode}
+                  onValueChange={(value) => isOneOf(GIT_MODES, value) && setGitMode(value)}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -182,7 +194,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                     <Label>Image</Label>
                     <Select
                       value={buildImage}
-                      onValueChange={(value) => setBuildImage(value as RunImage)}
+                      onValueChange={(value) => isOneOf(RUN_IMAGES, value) && setBuildImage(value)}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue />
@@ -222,7 +234,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
                     <Label>Image</Label>
                     <Select
                       value={runImage}
-                      onValueChange={(value) => setRunImage(value as RunImage)}
+                      onValueChange={(value) => isOneOf(RUN_IMAGES, value) && setRunImage(value)}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue />

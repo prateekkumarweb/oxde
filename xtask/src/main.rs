@@ -15,8 +15,11 @@ fn main() -> ExitCode {
     };
 
     let ok = match task.as_str() {
-        "build-ui" => build_ui(),
-        "build" => build_ui() && run("cargo", &["build"], &args.collect::<Vec<_>>(), None),
+        "gen-types" => gen_types(),
+        "build-ui" => gen_types() && build_ui(),
+        "build" => {
+            gen_types() && build_ui() && run("cargo", &["build"], &args.collect::<Vec<_>>(), None)
+        }
         _ => return usage(),
     };
 
@@ -28,10 +31,17 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: cargo xtask <build-ui|build> [args...]");
-    eprintln!("  build-ui        build oxde-ui/dist via Vite+ (`vp install && vp build`)");
+    eprintln!("usage: cargo xtask <gen-types|build-ui|build> [args...]");
+    eprintln!("  gen-types       regenerate oxde-ui/src/lib/generated from #[ts(export)] types");
+    eprintln!(
+        "  build-ui        gen-types, then build oxde-ui/dist via Vite+ (`vp install && vp build`)"
+    );
     eprintln!("  build [args]    build-ui, then `cargo build [args]`");
     ExitCode::FAILURE
+}
+
+fn gen_types() -> bool {
+    run("cargo", &["test", "--quiet", "export_bindings"], &[], None)
 }
 
 fn build_ui() -> bool {

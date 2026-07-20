@@ -42,7 +42,12 @@ export default defineConfig({
       "@tanstack/query/no-void-query-fn": "error",
       "@tanstack/query/mutation-property-order": "error",
       "@tanstack/query/prefer-query-options": "error",
+      "react/react-in-jsx-scope": "off",
     },
     options: { typeAware: true, typeCheck: true },
+    categories: {
+      correctness: "error",
+      suspicious: "warn",
+    },
   },
 });
