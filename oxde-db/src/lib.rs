@@ -21,9 +21,11 @@ pub async fn connect(data_dir: &Path) -> anyhow::Result<toasty::Db> {
 }
 
 /// Applies every migration under `toasty/migrations` that hasn't already
-/// been applied to this database. Reimplements `toasty-cli`'s `migration
-/// apply` using `toasty`'s public primitives directly, since `toasty-cli`
-/// prints to stdout and pulls in `clap`/`dialoguer` this path doesn't need.
+/// been applied to this database.
+///
+/// Reimplements `toasty-cli`'s `migration apply` using `toasty`'s public
+/// primitives directly, since `toasty-cli` prints to stdout and pulls in
+/// `clap`/`dialoguer` this path doesn't need.
 ///
 /// # Errors
 ///

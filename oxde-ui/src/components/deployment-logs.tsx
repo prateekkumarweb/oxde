@@ -1,17 +1,80 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/lib/api";
 import { ApiError } from "@/lib/auth";
+import type { AppSource, LogKind } from "@/lib/types";
+
+const PHASE_LABELS: Record<LogKind, string> = {
+  clone: "Clone",
+  install: "Install",
+  build: "Build",
+  run: "Run",
+};
+
+// Which log tabs apply to a deployment, derived from the app's source.
+function relevantPhases(source: AppSource): LogKind[] {
+  if (source.type !== "git") {
+    return ["clone"];
+  }
+  switch (source.mode.type) {
+    case "static":
+      return ["clone"];
+    case "build":
+      return ["clone", "build"];
+    case "run":
+      return source.mode.install_command ? ["clone", "install", "run"] : ["clone", "run"];
+    default:
+      return ["clone"];
+  }
+}
 
 interface DeploymentLogsProps {
   appName: string;
   deploymentId: string;
+  source: AppSource;
   onClose: () => void;
+}
+
+export function DeploymentLogs({ appName, deploymentId, source, onClose }: DeploymentLogsProps) {
+  const phases = relevantPhases(source);
+  const defaultPhase = phases[phases.length - 1];
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Logs - {deploymentId}</span>
+        <Button size="sm" variant="outline" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+      <Tabs defaultValue={defaultPhase}>
+        <TabsList>
+          {phases.map((phase) => (
+            <TabsTrigger key={phase} value={phase}>
+              {PHASE_LABELS[phase]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {phases.map((phase) => (
+          <TabsContent key={phase} value={phase}>
+            <DeploymentLogPane appName={appName} deploymentId={deploymentId} phase={phase} />
+          </TabsContent>
+        ))}
+      </Tabs>
+    </div>
+  );
+}
+
+interface DeploymentLogPaneProps {
+  appName: string;
+  deploymentId: string;
+  phase: LogKind;
 }
 
 type StreamState = "connecting" | "streaming" | "closed";
 
-export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLogsProps) {
+function DeploymentLogPane({ appName, deploymentId, phase }: DeploymentLogPaneProps) {
   const api = useApi();
   const [following, setFollowing] = useState(false);
   const [lines, setLines] = useState("");
@@ -29,6 +92,7 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
 
       try {
         const response = await api.streamLogs(appName, deploymentId, {
+          phase,
           follow: following,
           signal: controller.signal,
         });
@@ -59,7 +123,7 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
 
     void read();
     return () => controller.abort();
-  }, [api, appName, deploymentId, following]);
+  }, [api, appName, deploymentId, phase, following]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -75,17 +139,11 @@ export function DeploymentLogs({ appName, deploymentId, onClose }: DeploymentLog
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">Logs - {deploymentId}</span>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => setFollowing((prev) => !prev)}>
-            {following ? "Stop live tail" : "Live tail"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={onClose}>
-            Close
-          </Button>
-        </div>
+    <div className="flex flex-col gap-2">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => setFollowing((prev) => !prev)}>
+          {following ? "Stop live tail" : "Live tail"}
+        </Button>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <pre

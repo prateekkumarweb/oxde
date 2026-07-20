@@ -295,11 +295,16 @@ pub fn create_pending_git_deployment(
 pub fn clone_repo(
     staging: &Path,
     git_source: &GitSource,
+    log_target: Option<crate::deployment_logs::LogTarget>,
 ) -> AppResult<(std::path::PathBuf, String)> {
     std::fs::create_dir(staging)?;
     let checkout_dir = staging.join("_checkout");
-    let commit_sha =
-        git_fetch::clone_shallow(&git_source.repo_url, &git_source.branch, &checkout_dir)?;
+    let commit_sha = git_fetch::clone_shallow(
+        &git_source.repo_url,
+        &git_source.branch,
+        &checkout_dir,
+        log_target,
+    )?;
     std::fs::remove_dir_all(checkout_dir.join(".git"))?;
     Ok((checkout_dir, commit_sha))
 }

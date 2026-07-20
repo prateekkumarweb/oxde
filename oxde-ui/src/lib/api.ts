@@ -7,6 +7,7 @@ import type {
   ContainerStats,
   DeploymentView,
   EnvVar,
+  LogKind,
   RunConfig,
   UserView,
 } from "@/lib/types";
@@ -48,7 +49,7 @@ interface Api {
   streamLogs: (
     appName: string,
     id: string,
-    options: { follow: boolean; signal?: AbortSignal },
+    options: { phase: LogKind; follow: boolean; signal?: AbortSignal },
   ) => Promise<Response>;
   getDeploymentStats: (appName: string, id: string) => Promise<ContainerStats | null>;
 }
@@ -141,9 +142,9 @@ export function useApi(): Api {
           method: "DELETE",
         }),
 
-      streamLogs: (appName, id, { follow, signal }) =>
+      streamLogs: (appName, id, { phase, follow, signal }) =>
         requestStream(
-          `/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/logs?follow=${follow}`,
+          `/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/logs?phase=${phase}&follow=${follow}`,
           { signal },
         ),
 

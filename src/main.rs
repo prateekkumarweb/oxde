@@ -4,6 +4,7 @@ mod authz;
 mod config;
 mod containers;
 mod dashboard_assets;
+mod deployment_logs;
 mod error;
 mod git_fetch;
 mod models;
@@ -251,6 +252,25 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
         run_config,
         &app.env_vars,
         std::time::Duration::from_secs(state.install_timeout_secs()),
+        None, // install already ran on a previous startup
     )
-    .await
+    .await?;
+
+    // Container survives our restart, but nothing was capturing its logs
+    // while we were down - resume, or run.log stays stale until redeploy.
+    containers::spawn_run_log_pump(
+        state.docker(),
+        container_name,
+        deployment_logs::LogTarget {
+            path: state.deployment_log_path(
+                &app.name,
+                &deployment_id,
+                deployment_logs::LogKind::Run,
+            ),
+            deployment_id: deployment_id.clone(),
+            kind: deployment_logs::LogKind::Run,
+            registry: state.log_registry().clone(),
+        },
+    );
+    Ok(())
 }

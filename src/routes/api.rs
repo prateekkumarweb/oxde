@@ -9,6 +9,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
+use bytes::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
@@ -17,11 +19,9 @@ use crate::{
     accounts::AccountRole,
     auth::CurrentUser,
     authz, containers,
+    deployment_logs::{self, LogKind, LogTarget},
     error::{AppError, AppResult},
-    models::{
-        self, AppPermission, AppSource, Deployment, DeploymentStatus, EnvVar, GitDeployMode,
-        GitSource,
-    },
+    models::{self, AppPermission, AppSource, Deployment, EnvVar, GitDeployMode, GitSource},
     state::AppState,
     storage,
 };
@@ -325,13 +325,19 @@ async fn execute_git_deployment(
     let staging = state.unique_tmp_path("git-deployment");
     let timeout = Duration::from_secs(state.git_fetch_timeout_secs());
 
+    let clone_target = LogTarget {
+        path: state.deployment_log_path(app_name, deployment_id, LogKind::Clone),
+        deployment_id: deployment_id.to_string(),
+        kind: LogKind::Clone,
+        registry: state.log_registry().clone(),
+    };
     let clone_result = {
         let blocking_staging = staging.clone();
         let blocking_git_source = git_source.clone();
         tokio::time::timeout(
             timeout,
             tokio::task::spawn_blocking(move || {
-                storage::clone_repo(&blocking_staging, &blocking_git_source)
+                storage::clone_repo(&blocking_staging, &blocking_git_source, Some(clone_target))
             }),
         )
         .await
@@ -356,14 +362,23 @@ async fn execute_git_deployment(
         let container_name = containers::container_name(app_name, deployment_id);
         let build_timeout = Duration::from_secs(state.build_timeout_secs());
         let app = storage::get_app(state, app_name)?;
+        let build_target = LogTarget {
+            path: state.deployment_log_path(app_name, deployment_id, LogKind::Build),
+            deployment_id: deployment_id.to_string(),
+            kind: LogKind::Build,
+            registry: state.log_registry().clone(),
+        };
         if let Err(err) = containers::run_build_command(
             state.docker(),
             &container_name,
-            &checkout_dir,
-            build.image.image_tag(),
-            &build.command,
-            &app.env_vars,
-            build_timeout,
+            containers::CommandExec {
+                checkout_dir: &checkout_dir,
+                image: build.image.image_tag(),
+                command: &build.command,
+                env_vars: &app.env_vars,
+                timeout: build_timeout,
+            },
+            Some(build_target),
         )
         .await
         {
@@ -427,6 +442,12 @@ pub async fn activate_with_containers(
             AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
         })?;
         let checkout_dir = state.deployment_files_dir(app_name, deployment_id);
+        let install_target = run_config.install_command.is_some().then(|| LogTarget {
+            path: state.deployment_log_path(app_name, deployment_id, LogKind::Install),
+            deployment_id: deployment_id.to_string(),
+            kind: LogKind::Install,
+            registry: state.log_registry().clone(),
+        });
         containers::start(
             state.docker(),
             &container_name,
@@ -434,8 +455,20 @@ pub async fn activate_with_containers(
             run_config,
             &app.env_vars,
             Duration::from_secs(state.install_timeout_secs()),
+            install_target,
         )
         .await?;
+
+        containers::spawn_run_log_pump(
+            state.docker(),
+            &container_name,
+            LogTarget {
+                path: state.deployment_log_path(app_name, deployment_id, LogKind::Run),
+                deployment_id: deployment_id.to_string(),
+                kind: LogKind::Run,
+                registry: state.log_registry().clone(),
+            },
+        );
 
         if let Some(previous_id) = storage::active_deployment_id(state, app_name)
             && previous_id != deployment_id
@@ -534,37 +567,48 @@ async fn activate_deployment(
 struct LogsQuery {
     #[serde(default)]
     follow: bool,
+    /// Explicit phase to serve. Omitted means auto-pick.
+    phase: Option<LogKind>,
 }
 
+/// Serves `phase` if given, else whichever phase is active or furthest
+/// along. `follow=true` only live-tails if a pump is actively producing
+/// that phase; otherwise it's the same as `follow=false`.
 async fn deployment_logs(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
     Query(query): Query<LogsQuery>,
 ) -> AppResult<impl IntoResponse> {
-    let deployment = storage::get_deployment(&state, &app_name, &id)?;
+    storage::get_deployment(&state, &app_name, &id)?;
+    let dir = state.deployment_dir(&app_name, &id);
+    let active = state.log_registry().active(&id);
 
-    let stream_name = if matches!(deployment.status, DeploymentStatus::Pending) {
-        let app = storage::get_app(&state, &app_name)?;
-        let AppSource::Git(git_source) = app.source else {
-            return Err(AppError::NoContainer(id));
-        };
-        let base_name = containers::container_name(&app_name, &id);
-        match git_source.mode {
-            GitDeployMode::Build(_) => containers::build_container_name(&base_name),
-            GitDeployMode::Run(_) => containers::install_container_name(&base_name),
-            GitDeployMode::Static { .. } => return Err(AppError::NoContainer(id)),
-        }
-    } else {
-        deployment
-            .container_name
-            .ok_or_else(|| AppError::NoContainer(id.clone()))?
+    let kind = match query.phase {
+        Some(kind) => kind,
+        None => match active {
+            Some((kind, _)) => kind,
+            None => deployment_logs::resolve_terminal_phase(&dir)
+                .ok_or_else(|| AppError::NoContainer(id.clone()))?,
+        },
     };
+    let live_rx = active
+        .filter(|(active_kind, _)| *active_kind == kind)
+        .map(|(_, rx)| rx)
+        .filter(|_| query.follow);
 
-    let body = Body::from_stream(containers::logs(state.docker(), &stream_name, query.follow));
+    let backlog = deployment_logs::read_backlog(&dir, kind)?;
+
     let content_type = if query.follow {
         "text/event-stream"
     } else {
         "text/plain; charset=utf-8"
+    };
+    let body = match live_rx {
+        Some(rx) => Body::from_stream(
+            futures_util::stream::once(async move { Ok::<_, AppError>(Bytes::from(backlog)) })
+                .chain(deployment_logs::live_tail(rx)),
+        ),
+        None => Body::from(backlog),
     };
     Ok(([(header::CONTENT_TYPE, content_type)], body))
 }

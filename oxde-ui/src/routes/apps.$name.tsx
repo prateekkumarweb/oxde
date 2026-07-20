@@ -424,6 +424,7 @@ function AppDetail() {
                         <DeploymentLogs
                           appName={name}
                           deploymentId={deployment.id}
+                          source={app.source}
                           onClose={() => setLogsFor(null)}
                         />
                       </TableCell>

@@ -10,7 +10,7 @@ use std::{
 
 use bollard::Docker;
 
-use crate::reverse_proxy::ProxyClient;
+use crate::{deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
 
 /// How long a resolved container IP is trusted before `container_ip` is
 /// asked again - bounds how long routing can stay wrong after a container
@@ -37,6 +37,7 @@ struct Inner {
     container_ips: Mutex<HashMap<String, (String, Instant)>>,
     db: toasty::Db,
     sessions: Mutex<HashMap<String, crate::auth::Session>>,
+    log_registry: LogRegistry,
 }
 
 /// Scalar config `AppState::new` bundles a plain constructor's worth of
@@ -74,8 +75,13 @@ impl AppState {
                 container_ips: Mutex::new(HashMap::new()),
                 db,
                 sessions: Mutex::new(HashMap::new()),
+                log_registry: LogRegistry::new(),
             }),
         }
+    }
+
+    pub fn log_registry(&self) -> &LogRegistry {
+        &self.inner.log_registry
     }
 
     pub fn db(&self) -> &toasty::Db {
@@ -146,12 +152,25 @@ impl AppState {
         self.inner.data_dir.join("tmp")
     }
 
-    pub fn deployment_files_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
+    pub fn deployment_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
         self.apps_dir()
             .join(app_name)
             .join("deployments")
             .join(deployment_id)
-            .join("files")
+    }
+
+    pub fn deployment_files_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
+        self.deployment_dir(app_name, deployment_id).join("files")
+    }
+
+    pub fn deployment_log_path(
+        &self,
+        app_name: &str,
+        deployment_id: &str,
+        kind: crate::deployment_logs::LogKind,
+    ) -> PathBuf {
+        self.deployment_dir(app_name, deployment_id)
+            .join(kind.file_name())
     }
 
     /// Serializes activate/delete so they can't race each other into leaving

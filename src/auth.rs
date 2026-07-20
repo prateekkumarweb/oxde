@@ -62,6 +62,7 @@ where
             let session = sessions.get(&token).ok_or(AppError::Unauthenticated)?;
             if accounts::now_epoch_secs() - session.created_at > SESSION_MAX_AGE_SECS {
                 sessions.remove(&token);
+                drop(sessions);
                 return Err(AppError::Unauthenticated);
             }
             session.username.clone()

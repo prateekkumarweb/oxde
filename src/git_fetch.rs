@@ -1,15 +1,34 @@
 use std::{
+    io::Write as _,
     num::NonZeroU32,
     path::{Component, Path, PathBuf},
-    sync::atomic::AtomicBool,
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
-use crate::error::{AppError, AppResult};
+use bytes::Bytes;
+use gix::progress::{Id, MessageLevel, StepShared, Unit};
+use tokio::sync::broadcast;
+
+use crate::{
+    deployment_logs::{LogRegistry, LogTarget},
+    error::{AppError, AppResult},
+};
 
 /// Shallow (depth 1), single-branch clone + checkout of `repo_url` at
-/// `branch` into `dest`. Returns the checked-out commit's SHA.
-pub fn clone_shallow(repo_url: &str, branch: &str, dest: &Path) -> AppResult<String> {
+/// `branch` into `dest`. Returns the checked-out commit's SHA. `log_target`,
+/// if given, receives clone progress as it happens.
+pub fn clone_shallow(
+    repo_url: &str,
+    branch: &str,
+    dest: &Path,
+    log_target: Option<LogTarget>,
+) -> AppResult<String> {
     let should_interrupt = AtomicBool::new(false);
+    let progress = CloneProgress::start(log_target);
 
     let mut prepare = gix::prepare_clone(repo_url, dest)
         .map_err(|err| AppError::Git(err.to_string()))?
@@ -18,16 +37,213 @@ pub fn clone_shallow(repo_url: &str, branch: &str, dest: &Path) -> AppResult<Str
         .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(NonZeroU32::MIN));
 
     let (mut checkout, _) = prepare
-        .fetch_then_checkout(gix::progress::Discard, &should_interrupt)
+        .fetch_then_checkout(progress.clone(), &should_interrupt)
         .map_err(|err| AppError::Git(err.to_string()))?;
     let (repo, _) = checkout
-        .main_worktree(gix::progress::Discard, &should_interrupt)
+        .main_worktree(progress, &should_interrupt)
         .map_err(|err| AppError::Git(err.to_string()))?;
 
     let head_id = repo
         .head_id()
         .map_err(|err| AppError::Git(err.to_string()))?;
     Ok(head_id.to_string())
+}
+
+/// Deregisters once every `CloneProgress` sharing this sink is dropped.
+struct DeregisterOnDrop {
+    registry: LogRegistry,
+    deployment_id: String,
+}
+
+impl Drop for DeregisterOnDrop {
+    fn drop(&mut self) {
+        self.registry.deregister(&self.deployment_id);
+    }
+}
+
+/// The shared log destination - every `CloneProgress` spawned from one root
+/// writes to the same `clone.log`.
+struct LogSink {
+    file: Option<Mutex<std::fs::File>>,
+    tx: Option<broadcast::Sender<Bytes>>,
+    _dereg: Option<DeregisterOnDrop>,
+}
+
+/// Min gap between progress lines from one instance - gix calls `inc_by`
+/// far more often than is useful to log.
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Bridges gix's progress reporting to `clone.log`. Each `add_child` gets
+/// its own name/counter/throttle, sharing only the underlying sink, so
+/// unrelated phases (objects, deltas, checkout, ...) don't share counts.
+#[derive(Clone)]
+struct CloneProgress {
+    sink: Arc<LogSink>,
+    name: String,
+    max: Option<gix::progress::Step>,
+    step: StepShared,
+    last_emit: Arc<Mutex<Instant>>,
+}
+
+impl CloneProgress {
+    fn start(log_target: Option<LogTarget>) -> Self {
+        let Some(target) = log_target else {
+            return Self::disabled();
+        };
+        let Some(tx) = target
+            .registry
+            .try_register(&target.deployment_id, target.kind)
+        else {
+            return Self::disabled();
+        };
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&target.path)
+            .inspect_err(|err| {
+                tracing::warn!(error = %err, path = %target.path.display(), "failed to open clone.log");
+            })
+            .ok()
+            .map(Mutex::new);
+
+        Self::with_sink(Arc::new(LogSink {
+            file,
+            tx: Some(tx),
+            _dereg: Some(DeregisterOnDrop {
+                registry: target.registry,
+                deployment_id: target.deployment_id,
+            }),
+        }))
+    }
+
+    fn disabled() -> Self {
+        Self::with_sink(Arc::new(LogSink {
+            file: None,
+            tx: None,
+            _dereg: None,
+        }))
+    }
+
+    fn with_sink(sink: Arc<LogSink>) -> Self {
+        Self {
+            sink,
+            name: String::new(),
+            max: None,
+            step: Arc::new(AtomicUsize::new(0)),
+            last_emit: Arc::new(Mutex::new(
+                Instant::now()
+                    .checked_sub(PROGRESS_EMIT_INTERVAL)
+                    .unwrap_or_else(Instant::now),
+            )),
+        }
+    }
+
+    fn spawn_child(&self, name: String) -> Self {
+        Self {
+            name,
+            ..Self::with_sink(self.sink.clone())
+        }
+    }
+
+    fn write_line(&self, message: &str) {
+        if let Some(file) = &self.sink.file {
+            let _ = writeln!(
+                file.lock().unwrap_or_else(PoisonError::into_inner),
+                "{message}"
+            );
+        }
+        if let Some(tx) = &self.sink.tx {
+            let _ = tx.send(Bytes::from(format!("{message}\n")));
+        }
+    }
+
+    /// Skips unnamed progress (the root) - a bare number isn't useful.
+    fn maybe_emit(&self, step: gix::progress::Step) {
+        if self.name.is_empty() {
+            return;
+        }
+        {
+            let mut last = self
+                .last_emit
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if last.elapsed() < PROGRESS_EMIT_INTERVAL {
+                return;
+            }
+            *last = Instant::now();
+        }
+        let line = match self.max {
+            Some(max) if max > 0 => {
+                format!(
+                    "{}: {step}/{max} ({}%)",
+                    self.name,
+                    step.saturating_mul(100) / max
+                )
+            }
+            _ => format!("{}: {step}", self.name),
+        };
+        self.write_line(&line);
+    }
+}
+
+impl gix::Count for CloneProgress {
+    fn set(&self, step: gix::progress::Step) {
+        self.step.store(step, Ordering::Relaxed);
+        self.maybe_emit(step);
+    }
+
+    fn step(&self) -> gix::progress::Step {
+        self.step.load(Ordering::Relaxed)
+    }
+
+    fn inc_by(&self, step: gix::progress::Step) {
+        let new_step = self.step.fetch_add(step, Ordering::Relaxed) + step;
+        self.maybe_emit(new_step);
+    }
+
+    fn counter(&self) -> StepShared {
+        self.step.clone()
+    }
+}
+
+impl gix::Progress for CloneProgress {
+    fn init(&mut self, max: Option<gix::progress::Step>, _unit: Option<Unit>) {
+        self.max = max;
+    }
+
+    fn set_max(&mut self, max: Option<gix::progress::Step>) -> Option<gix::progress::Step> {
+        std::mem::replace(&mut self.max, max)
+    }
+
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn name(&self) -> Option<String> {
+        (!self.name.is_empty()).then(|| self.name.clone())
+    }
+
+    fn id(&self) -> Id {
+        gix::progress::UNKNOWN
+    }
+
+    fn message(&self, _level: MessageLevel, message: String) {
+        self.write_line(&message);
+    }
+}
+
+impl gix::NestedProgress for CloneProgress {
+    type SubProgress = Self;
+
+    fn add_child(&mut self, name: impl Into<String>) -> Self {
+        self.spawn_child(name.into())
+    }
+
+    fn add_child_with_id(&mut self, name: impl Into<String>, _id: Id) -> Self {
+        self.spawn_child(name.into())
+    }
 }
 
 /// Resolves `publish_dir` (a path relative to `checkout_dir`, or `None` for

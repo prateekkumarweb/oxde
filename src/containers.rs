@@ -20,6 +20,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::{
+    deployment_logs::LogTarget,
     error::{AppError, AppResult},
     models::{EnvVar, RunConfig},
 };
@@ -129,6 +130,7 @@ pub async fn start(
     config: &RunConfig,
     env_vars: &[EnvVar],
     install_timeout: Duration,
+    install_log_target: Option<LogTarget>,
 ) -> AppResult<()> {
     if is_running(docker, name).await? {
         return Ok(());
@@ -147,11 +149,14 @@ pub async fn start(
         run_install_command(
             docker,
             name,
-            checkout_dir,
-            image,
-            install_command,
-            env_vars,
-            install_timeout,
+            CommandExec {
+                checkout_dir,
+                image,
+                command: install_command,
+                env_vars,
+                timeout: install_timeout,
+            },
+            install_log_target,
         )
         .await?;
     }
@@ -203,23 +208,26 @@ pub fn build_container_name(parent_name: &str) -> String {
     format!("{parent_name}-build")
 }
 
+/// Bundles a one-shot command's config to stay under clippy's arg-count lint.
+pub struct CommandExec<'a> {
+    pub checkout_dir: &'a Path,
+    pub image: &'a str,
+    pub command: &'a str,
+    pub env_vars: &'a [EnvVar],
+    pub timeout: Duration,
+}
+
 async fn run_install_command(
     docker: &Docker,
     parent_name: &str,
-    checkout_dir: &Path,
-    image: &str,
-    install_command: &str,
-    env_vars: &[EnvVar],
-    timeout: Duration,
+    exec: CommandExec<'_>,
+    log_target: Option<LogTarget>,
 ) -> AppResult<()> {
     run_command_to_completion(
         docker,
         &install_container_name(parent_name),
-        checkout_dir,
-        image,
-        install_command,
-        env_vars,
-        timeout,
+        exec,
+        log_target,
     )
     .await
 }
@@ -227,22 +235,10 @@ async fn run_install_command(
 pub async fn run_build_command(
     docker: &Docker,
     parent_name: &str,
-    checkout_dir: &Path,
-    image: &str,
-    build_command: &str,
-    env_vars: &[EnvVar],
-    timeout: Duration,
+    exec: CommandExec<'_>,
+    log_target: Option<LogTarget>,
 ) -> AppResult<()> {
-    run_command_to_completion(
-        docker,
-        &build_container_name(parent_name),
-        checkout_dir,
-        image,
-        build_command,
-        env_vars,
-        timeout,
-    )
-    .await
+    run_command_to_completion(docker, &build_container_name(parent_name), exec, log_target).await
 }
 
 /// Doesn't remove the container immediately on exit - `schedule_cleanup`
@@ -250,23 +246,20 @@ pub async fn run_build_command(
 async fn run_command_to_completion(
     docker: &Docker,
     container_name: &str,
-    checkout_dir: &Path,
-    image: &str,
-    command: &str,
-    env_vars: &[EnvVar],
-    timeout: Duration,
+    exec: CommandExec<'_>,
+    log_target: Option<LogTarget>,
 ) -> AppResult<()> {
     let body = ContainerCreateBody {
-        image: Some(image.to_string()),
+        image: Some(exec.image.to_string()),
         working_dir: Some("/app".to_string()),
         cmd: Some(vec![
             "sh".to_string(),
             "-c".to_string(),
-            command.to_string(),
+            exec.command.to_string(),
         ]),
-        env: Some(env_strings(env_vars)),
+        env: Some(env_strings(exec.env_vars)),
         host_config: Some(HostConfig {
-            binds: Some(vec![bind_mount(checkout_dir)]),
+            binds: Some(vec![bind_mount(exec.checkout_dir)]),
             ..Default::default()
         }),
         ..Default::default()
@@ -283,9 +276,14 @@ async fn run_command_to_completion(
         .await
         .map_err(|err| start_failed(&err))?;
 
+    let pump_handle = log_target.map(|target| {
+        let source = logs(docker, container_name, true);
+        tokio::spawn(crate::deployment_logs::run_pump(target, source))
+    });
+
     let wait_options = WaitContainerOptionsBuilder::new().build();
     let mut wait_stream = docker.wait_container(container_name, Some(wait_options));
-    let wait_result = tokio::time::timeout(timeout, wait_stream.try_next()).await;
+    let wait_result = tokio::time::timeout(exec.timeout, wait_stream.try_next()).await;
 
     let result = match wait_result {
         Ok(Ok(_)) => Ok(()),
@@ -299,14 +297,21 @@ async fn run_command_to_completion(
             docker.stop_container(container_name, None).await.ok();
             Err(AppError::ContainerStartFailed(format!(
                 "command timed out after {}s",
-                timeout.as_secs()
+                exec.timeout.as_secs()
             )))
         }
     };
 
+    // Bounded wait so the log file is complete by the time we return.
+    if let Some(handle) = pump_handle {
+        let _ = tokio::time::timeout(PUMP_JOIN_TIMEOUT, handle).await;
+    }
+
     schedule_cleanup(docker.clone(), container_name.to_string());
     result
 }
+
+const PUMP_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const INSTALL_CONTAINER_CLEANUP_GRACE: Duration = Duration::from_secs(30);
 
@@ -354,6 +359,13 @@ pub async fn container_ip(docker: &Docker, name: &str) -> AppResult<Option<Strin
         .and_then(|endpoint| endpoint.ip_address)
         .filter(|ip| !ip.is_empty());
     Ok(ip)
+}
+
+/// Spawns a detached pump appending `name`'s logs to `target`'s file until
+/// the container stops. A no-op if this deployment already has a pump.
+pub fn spawn_run_log_pump(docker: &Docker, name: &str, target: LogTarget) {
+    let source = logs(docker, name, true);
+    tokio::spawn(crate::deployment_logs::run_pump(target, source));
 }
 
 const TAIL_LINES: &str = "256";
@@ -519,7 +531,8 @@ mod live_tests {
             &checkout,
             &config,
             &[],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
+            None,
         )
         .await
         .expect("start container");
@@ -585,7 +598,8 @@ mod live_tests {
             &checkout,
             &config,
             &[],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
+            None,
         )
         .await;
         assert!(result.is_err());
@@ -614,6 +628,7 @@ mod live_tests {
             &config,
             &[],
             Duration::from_millis(200),
+            None,
         )
         .await;
         assert!(matches!(result, Err(AppError::ContainerStartFailed(_))));
