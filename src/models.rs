@@ -346,9 +346,8 @@ mod tests {
         assert_eq!(run.install_command.as_deref(), Some("npm install"));
     }
 
-    /// A `GitSource` written before `mode` existed (old `app.json` on disk,
-    /// implicitly build-less/static with no `publish_dir`) must still
-    /// deserialize.
+    /// A `GitSource` serialized before `mode` existed (implicitly
+    /// build-less/static with no `publish_dir`) must still deserialize.
     #[test]
     fn git_source_without_mode_field_deserializes() {
         let json = r#"{"repo_url":"https://example.com/repo.git","branch":"main"}"#;
@@ -379,8 +378,8 @@ mod tests {
         assert_eq!(build.output_dir, "dist");
     }
 
-    /// A `Deployment` written before `container_name` existed (old
-    /// `deployment.json` on disk) must still deserialize, defaulting to `None`.
+    /// A `Deployment` serialized before `container_name` existed must still
+    /// deserialize, defaulting to `None`.
     #[test]
     fn deployment_without_container_name_field_deserializes() {
         let json = r#"{

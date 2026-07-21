@@ -402,30 +402,35 @@ pub async fn update_app_permissions(
 pub async fn delete_app(state: &AppState, name: &str) -> AppResult<()> {
     let mut db = state.db().clone();
     let guard = state.write_lock().await;
-    let result: AppResult<Uuid> = async {
+    let result: AppResult<()> = async {
         let app_row = find_app_row(&mut db, name).await?;
 
+        let mut tx = db.transaction().await?;
+        DbDeployment::all()
+            .filter(DbDeployment::fields().app_id().eq(app_row.id))
+            .delete()
+            .exec(&mut tx)
+            .await?;
         DbAppPermission::all()
             .filter(DbAppPermission::fields().app_id().eq(app_row.id))
             .delete()
-            .exec(&mut db)
+            .exec(&mut tx)
             .await?;
         DbApp::all()
             .filter(DbApp::fields().id().eq(app_row.id))
             .delete()
-            .exec(&mut db)
+            .exec(&mut tx)
             .await?;
+        tx.commit().await?;
 
-        Ok(app_row.id)
+        let staging = state.unique_tmp_path("deleted");
+        std::fs::rename(state.apps_dir().join(app_row.id.to_string()), &staging)?;
+        std::fs::remove_dir_all(&staging)?;
+        Ok(())
     }
     .await;
     drop(guard);
-    let app_id = result?;
-
-    let staging = state.unique_tmp_path("deleted");
-    std::fs::rename(state.apps_dir().join(app_id.to_string()), &staging)?;
-    std::fs::remove_dir_all(&staging)?;
-    Ok(())
+    result
 }
 
 fn stage_deployment_files(
@@ -449,8 +454,13 @@ pub async fn create_deployment(
     upload_size_bytes: u64,
 ) -> AppResult<Deployment> {
     let mut db = state.db().clone();
-    let app_row = find_app_row(&mut db, app_name).await?;
 
+    // Staging is independent of any app's directory tree, so it doesn't
+    // need `write_lock` - only the app-existence check, rename into place,
+    // and DB insert below do (see `activate_deployment`'s doc comment for
+    // why: without the lock, a concurrent `delete_app` could tear down the
+    // app's directory out from under this rename, or leave this insert
+    // referencing an app that's already gone).
     let id = Uuid::now_v7();
     let staging = state.unique_tmp_path("deployment");
     let blocking_staging = staging.clone();
@@ -469,23 +479,37 @@ pub async fn create_deployment(
         std::fs::remove_dir_all(&staging).ok();
     })?;
 
-    let target = state.deployment_dir(&app_row.id.to_string(), &id.to_string());
-    std::fs::rename(&staging, &target).map_err(|err| {
-        std::fs::remove_dir_all(&staging).ok();
-        AppError::Io(err)
-    })?;
+    let guard = state.write_lock().await;
+    let result: AppResult<Deployment> = async {
+        let app_row = find_app_row(&mut db, app_name).await.inspect_err(|_| {
+            std::fs::remove_dir_all(&staging).ok();
+        })?;
 
-    let row = DbDeployment::create()
-        .id(id)
-        .app_id(app_row.id)
-        .created_at(Timestamp::now().as_second())
-        .original_filename(original_filename)
-        .upload_size_bytes(i64::try_from(upload_size_bytes).unwrap_or(i64::MAX))
-        .status(DeploymentState::Ready.as_str())
-        .exec(&mut db)
-        .await?;
+        let target = state.deployment_dir(&app_row.id.to_string(), &id.to_string());
+        std::fs::rename(&staging, &target).map_err(|err| {
+            std::fs::remove_dir_all(&staging).ok();
+            AppError::Io(err)
+        })?;
 
-    let deployment = deployment_from_row(row, app_name)?;
+        let row = DbDeployment::create()
+            .id(id)
+            .app_id(app_row.id)
+            .created_at(Timestamp::now().as_second())
+            .original_filename(original_filename)
+            .upload_size_bytes(i64::try_from(upload_size_bytes).unwrap_or(i64::MAX))
+            .status(DeploymentState::Ready.as_str())
+            .exec(&mut db)
+            .await
+            .inspect_err(|_| {
+                std::fs::remove_dir_all(&target).ok();
+            })?;
+
+        deployment_from_row(row, app_name)
+    }
+    .await;
+    drop(guard);
+    let deployment = result?;
+
     activate_deployment(state, app_name, &deployment.id).await?;
     Ok(deployment)
 }
@@ -721,21 +745,32 @@ pub async fn active_deployment_id(state: &AppState, app_name: &str) -> Option<St
     row.active_deployment_id.map(|id| id.to_string())
 }
 
+/// Holds `write_lock` so this can't race `delete_deployment`'s "is this the
+/// active deployment" check - without it, a delete could read the *old*
+/// active id, lose the race to a concurrent activate, and remove the
+/// deployment that just became active, leaving `active_deployment_id`
+/// dangling.
 pub async fn activate_deployment(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
     let mut db = state.db().clone();
-    let mut app_row = find_app_row(&mut db, app_name).await?;
-    let deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
+    let guard = state.write_lock().await;
+    let result: AppResult<()> = async {
+        let mut app_row = find_app_row(&mut db, app_name).await?;
+        let deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
 
-    let mut update = app_row.update();
-    update = update
-        .active_deployment_id(Some(deployment_row.id))
-        .updated_at(Timestamp::now().as_second());
-    update.exec(&mut db).await?;
-    Ok(())
+        let mut update = app_row.update();
+        update = update
+            .active_deployment_id(Some(deployment_row.id))
+            .updated_at(Timestamp::now().as_second());
+        update.exec(&mut db).await?;
+        Ok(())
+    }
+    .await;
+    drop(guard);
+    result
 }
 
 pub async fn delete_deployment(
@@ -894,6 +929,38 @@ mod tests {
             .await
             .expect_err("app should be gone");
         assert!(matches!(err, AppError::AppNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_app_cascades_to_its_deployments() {
+        let state = test_state("delete-app-cascade").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
+
+        let zip = state.tmp_dir().join("v1.zip");
+        std::fs::write(&zip, tiny_zip(b"v1")).expect("write zip");
+        let deployment = create_deployment(&state, "blog", &zip, None, 2)
+            .await
+            .expect("create deployment");
+        let deployment_uuid = uuid::Uuid::parse_str(&deployment.id).expect("parse deployment id");
+
+        delete_app(&state, "blog").await.expect("delete_app");
+
+        let mut db = state.db().clone();
+        let remaining = oxde_db::models::Deployment::all()
+            .filter(
+                oxde_db::models::Deployment::fields()
+                    .id()
+                    .eq(deployment_uuid),
+            )
+            .exec(&mut db)
+            .await
+            .expect("query deployments");
+        assert!(
+            remaining.is_empty(),
+            "deleting an app must delete its Deployment rows too, not just the App row"
+        );
     }
 
     #[tokio::test]
