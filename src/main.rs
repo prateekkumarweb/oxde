@@ -80,6 +80,9 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(state.apps_dir())
         .context("failed to create apps dir under data dir")?;
     storage::sweep_tmp_dir(&state).context("failed to sweep tmp directory on startup")?;
+    storage::sweep_orphaned_dirs(&state)
+        .await
+        .context("failed to sweep orphaned app/deployment directories on startup")?;
     containers::ensure_network(state.docker())
         .await
         .context("failed to ensure the run-mode container network exists")?;

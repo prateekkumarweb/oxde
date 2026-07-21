@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::ErrorKind, path::Path, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    io::ErrorKind,
+    path::Path,
+    str::FromStr,
+};
 
 use jiff::Timestamp;
 use oxde_db::models::{
@@ -27,6 +32,90 @@ pub fn sweep_tmp_dir(state: &AppState) -> std::io::Result<()> {
         std::fs::remove_dir_all(&tmp_dir)?;
     }
     std::fs::create_dir_all(&tmp_dir)
+}
+
+/// Deletes any `apps/<id>` directory with no matching `App` row, and any
+/// `apps/<id>/deployments/<id>` directory with no matching `Deployment`
+/// row - cleans up orphans left by a crash between staging a directory into
+/// place and committing its DB row (or the reverse ordering on delete).
+pub async fn sweep_orphaned_dirs(state: &AppState) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let valid_app_ids: HashSet<Uuid> = DbApp::all()
+        .exec(&mut db)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+
+    let entries = match std::fs::read_dir(state.apps_dir()) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(AppError::Io(err)),
+    };
+
+    let mut removed = 0u32;
+    for entry in entries {
+        let entry = entry?;
+        let Some(dir_name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(app_id) = Uuid::parse_str(&dir_name) else {
+            continue;
+        };
+
+        if valid_app_ids.contains(&app_id) {
+            removed += sweep_orphaned_deployment_dirs(&mut db, state, &dir_name, app_id).await?;
+        } else {
+            tracing::warn!(app_id = %app_id, "removing orphaned app directory with no matching App row");
+            std::fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+    }
+    tracing::info!(removed, "orphan sweep complete");
+    Ok(())
+}
+
+async fn sweep_orphaned_deployment_dirs(
+    db: &mut Db,
+    state: &AppState,
+    app_dir_name: &str,
+    app_id: Uuid,
+) -> AppResult<u32> {
+    let valid_deployment_ids: HashSet<Uuid> = DbDeployment::all()
+        .filter(DbDeployment::fields().app_id().eq(app_id))
+        .exec(db)
+        .await?
+        .into_iter()
+        .map(|row| row.id)
+        .collect();
+
+    let deployments_dir = state.apps_dir().join(app_dir_name).join("deployments");
+    let entries = match std::fs::read_dir(&deployments_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(AppError::Io(err)),
+    };
+
+    let mut removed = 0u32;
+    for entry in entries {
+        let entry = entry?;
+        let Some(dir_name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let Ok(deployment_id) = Uuid::parse_str(&dir_name) else {
+            continue;
+        };
+        if !valid_deployment_ids.contains(&deployment_id) {
+            tracing::warn!(
+                app_id = %app_id,
+                deployment_id = %deployment_id,
+                "removing orphaned deployment directory with no matching Deployment row"
+            );
+            std::fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 async fn find_app_row(db: &mut Db, name: &str) -> AppResult<DbApp> {
@@ -921,6 +1010,55 @@ mod tests {
         assert!(
             leftovers.is_empty(),
             "startup sweep must finish an interrupted delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_orphaned_dirs_removes_dirs_with_no_matching_db_row() {
+        let state = test_state("sweep-orphans").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
+        let app = get_app(&state, "blog").await.expect("get_app");
+
+        let zip = state.tmp_dir().join("v1.zip");
+        std::fs::write(&zip, tiny_zip(b"v1")).expect("write zip");
+        let deployment = create_deployment(&state, "blog", &zip, None, 2)
+            .await
+            .expect("create deployment");
+
+        // An orphaned deployment directory - no matching `Deployment` row -
+        // under a real app.
+        let orphan_deployment_id = uuid::Uuid::now_v7();
+        std::fs::create_dir_all(state.deployment_dir(&app.id, &orphan_deployment_id.to_string()))
+            .expect("create orphan deployment dir");
+
+        // An orphaned app directory - no matching `App` row at all.
+        let orphan_app_id = uuid::Uuid::now_v7();
+        std::fs::create_dir_all(state.apps_dir().join(orphan_app_id.to_string()))
+            .expect("create orphan app dir");
+
+        super::sweep_orphaned_dirs(&state)
+            .await
+            .expect("sweep_orphaned_dirs");
+
+        assert!(
+            !state.apps_dir().join(orphan_app_id.to_string()).exists(),
+            "orphaned app directory must be removed"
+        );
+        assert!(
+            !state
+                .deployment_dir(&app.id, &orphan_deployment_id.to_string())
+                .exists(),
+            "orphaned deployment directory must be removed"
+        );
+        assert!(
+            state.apps_dir().join(&app.id).exists(),
+            "app with a matching row must be untouched"
+        );
+        assert!(
+            state.deployment_dir(&app.id, &deployment.id).exists(),
+            "deployment with a matching row must be untouched"
         );
     }
 
