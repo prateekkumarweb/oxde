@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        Arc, Mutex, MutexGuard, PoisonError,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use bollard::Docker;
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use crate::{deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
 
@@ -24,7 +25,7 @@ pub struct AppState {
 
 struct Inner {
     data_dir: PathBuf,
-    write_lock: Mutex<()>,
+    write_lock: AsyncMutex<()>,
     id_seq: AtomicU64,
     max_upload_bytes: u64,
     max_uncompressed_bytes: u64,
@@ -62,7 +63,7 @@ impl AppState {
         Self {
             inner: Arc::new(Inner {
                 data_dir,
-                write_lock: Mutex::new(()),
+                write_lock: AsyncMutex::new(()),
                 id_seq: AtomicU64::new(0),
                 max_upload_bytes: limits.max_upload_bytes,
                 max_uncompressed_bytes: limits.max_uncompressed_bytes,
@@ -152,34 +153,31 @@ impl AppState {
         self.inner.data_dir.join("tmp")
     }
 
-    pub fn deployment_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
+    pub fn deployment_dir(&self, app_id: &str, deployment_id: &str) -> PathBuf {
         self.apps_dir()
-            .join(app_name)
+            .join(app_id)
             .join("deployments")
             .join(deployment_id)
     }
 
-    pub fn deployment_files_dir(&self, app_name: &str, deployment_id: &str) -> PathBuf {
-        self.deployment_dir(app_name, deployment_id).join("files")
+    pub fn deployment_files_dir(&self, app_id: &str, deployment_id: &str) -> PathBuf {
+        self.deployment_dir(app_id, deployment_id).join("files")
     }
 
     pub fn deployment_log_path(
         &self,
-        app_name: &str,
+        app_id: &str,
         deployment_id: &str,
         kind: crate::deployment_logs::LogKind,
     ) -> PathBuf {
-        self.deployment_dir(app_name, deployment_id)
+        self.deployment_dir(app_id, deployment_id)
             .join(kind.file_name())
     }
 
-    /// Serializes activate/delete so they can't race each other into leaving
-    /// `active` dangling.
-    pub fn write_lock(&self) -> MutexGuard<'_, ()> {
-        self.inner
-            .write_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// Serializes mutating operations that touch both `files/` and the
+    /// database so they can't race each other into an inconsistent state.
+    pub async fn write_lock(&self) -> AsyncMutexGuard<'_, ()> {
+        self.inner.write_lock.lock().await
     }
 
     pub fn next_seq(&self) -> u64 {

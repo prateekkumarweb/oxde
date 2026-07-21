@@ -24,20 +24,7 @@ pub async fn serve(state: &AppState, app_name: &str, request: Request<Body>) -> 
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let blocking_state = state.clone();
-    let blocking_app_name = app_name.to_string();
-    let target = tokio::task::spawn_blocking(move || {
-        resolve_serve_target(&blocking_state, &blocking_app_name)
-    })
-    .await;
-
-    let target = match target {
-        Ok(target) => target,
-        Err(err) => {
-            tracing::error!(error = %err, app = app_name, "serve target resolution panicked");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
+    let target = resolve_serve_target(state, app_name).await;
 
     match target {
         ServeTarget::NotFound => StatusCode::NOT_FOUND.into_response(),
@@ -55,20 +42,19 @@ pub async fn serve(state: &AppState, app_name: &str, request: Request<Body>) -> 
     }
 }
 
-/// Runs on a blocking thread (see `serve`) - resolves purely from `std::fs`
-/// and JSON reads, with no I/O left for the caller to do.
-fn resolve_serve_target(state: &AppState, app_name: &str) -> ServeTarget {
-    let Some(deployment_id) = storage::active_deployment_id(state, app_name) else {
+async fn resolve_serve_target(state: &AppState, app_name: &str) -> ServeTarget {
+    let Some(deployment_id) = storage::active_deployment_id(state, app_name).await else {
         return ServeTarget::NotFound;
     };
-    let Ok(deployment) = storage::get_deployment(state, app_name, &deployment_id) else {
+    let Ok(deployment) = storage::get_deployment(state, app_name, &deployment_id).await else {
+        return ServeTarget::NotFound;
+    };
+
+    let Ok(app) = storage::get_app(state, app_name).await else {
         return ServeTarget::NotFound;
     };
 
     if let Some(container_name) = deployment.container_name {
-        let Ok(app) = storage::get_app(state, app_name) else {
-            return ServeTarget::NotFound;
-        };
         let Some(run_config) = app.run_config().cloned() else {
             return ServeTarget::NotFound;
         };
@@ -78,7 +64,7 @@ fn resolve_serve_target(state: &AppState, app_name: &str) -> ServeTarget {
         };
     }
 
-    let active_files_dir = state.apps_dir().join(app_name).join("active").join("files");
+    let active_files_dir = state.deployment_files_dir(&app.id, &deployment_id);
     if !active_files_dir.is_dir() {
         return ServeTarget::NotFound;
     }

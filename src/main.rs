@@ -148,7 +148,7 @@ async fn bootstrap_admin(
 /// restart, so rather than guess, it's marked `Failed` and any lingering
 /// install container is force-removed.
 async fn fail_pending_deployments(state: &AppState) {
-    let apps = match storage::list_apps(state) {
+    let apps = match storage::list_apps(state).await {
         Ok(apps) => apps,
         Err(err) => {
             tracing::error!(error = %err, "failed to list apps for pending-deployment reconciliation");
@@ -157,7 +157,7 @@ async fn fail_pending_deployments(state: &AppState) {
     };
 
     for app in apps {
-        let deployments = match storage::list_deployments(state, &app.name) {
+        let deployments = match storage::list_deployments(state, &app.name).await {
             Ok(deployments) => deployments,
             Err(err) => {
                 tracing::error!(error = %err, app = app.name, "failed to list deployments for pending-deployment reconciliation");
@@ -193,7 +193,9 @@ async fn fail_pending_deployments(state: &AppState) {
                 &app.name,
                 &deployment.id,
                 "interrupted by server restart",
-            ) {
+            )
+            .await
+            {
                 tracing::error!(
                     error = %err,
                     app = app.name,
@@ -212,7 +214,7 @@ async fn fail_pending_deployments(state: &AppState) {
 /// reconciliation failure is logged and skipped rather than aborting
 /// startup, so a single broken run-mode app can't take down unrelated apps.
 async fn reconcile_run_mode_containers(state: &AppState) {
-    let apps = match storage::list_apps(state) {
+    let apps = match storage::list_apps(state).await {
         Ok(apps) => apps,
         Err(err) => {
             tracing::error!(error = %err, "failed to list apps for startup reconciliation");
@@ -235,15 +237,15 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     let Some(run_config) = app.run_config() else {
         return Ok(());
     };
-    let Some(deployment_id) = storage::active_deployment_id(state, &app.name) else {
+    let Some(deployment_id) = storage::active_deployment_id(state, &app.name).await else {
         return Ok(());
     };
-    let deployment = storage::get_deployment(state, &app.name, &deployment_id)?;
+    let deployment = storage::get_deployment(state, &app.name, &deployment_id).await?;
     let Some(container_name) = &deployment.container_name else {
         return Ok(());
     };
 
-    let checkout_dir = state.deployment_files_dir(&app.name, &deployment_id);
+    let checkout_dir = state.deployment_files_dir(&app.id, &deployment_id);
     tracing::info!(app = app.name, "starting run-mode container on startup");
     containers::start(
         state.docker(),
@@ -262,11 +264,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
         state.docker(),
         container_name,
         deployment_logs::LogTarget {
-            path: state.deployment_log_path(
-                &app.name,
-                &deployment_id,
-                deployment_logs::LogKind::Run,
-            ),
+            path: state.deployment_log_path(&app.id, &deployment_id, deployment_logs::LogKind::Run),
             deployment_id: deployment_id.clone(),
             kind: deployment_logs::LogKind::Run,
             registry: state.log_registry().clone(),

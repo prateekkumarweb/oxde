@@ -10,3 +10,4 @@ anyhow = "1.0.104"
 toasty = { version = "0.8.0", features = ["turso", "migration"] }
 toasty-core = "0.8.0"
 tracing = "0.1.44"
+uuid = { version = "1.24.0", features = ["v7"] }

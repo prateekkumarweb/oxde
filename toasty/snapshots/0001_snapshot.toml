@@ -1,0 +1,269 @@
+version = 1
+
+[schema]
+
+[[schema.tables]]
+id = 0
+name = "users"
+primary_key = { columns = [{ table = 0, index = 0 }], index = { table = 0, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 0 }
+name = "id"
+ty = "I64"
+storage_ty = { Integer = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 0, index = 1 }
+name = "username"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 2 }
+name = "password_hash"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 3 }
+name = "role"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 5 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 0, index = 0 }
+name = "index_users_by_id"
+on = 0
+columns = [{ column = { table = 0, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 0, index = 1 }
+name = "index_users_by_username"
+on = 0
+columns = [{ column = { table = 0, index = 1 }, op = "Eq", scope = "Partition" }]
+unique = true
+
+[[schema.tables]]
+id = 1
+name = "apps"
+primary_key = { columns = [{ table = 1, index = 0 }], index = { table = 1, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 1, index = 0 }
+name = "id"
+ty = "Bytes"
+storage_ty = "Blob"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 1 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 2 }
+name = "source_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 3 }
+name = "env_vars_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 4 }
+name = "active_deployment_id"
+ty = "Bytes"
+storage_ty = "Blob"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 5 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 1, index = 6 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 1, index = 0 }
+name = "index_apps_by_id"
+on = 1
+columns = [{ column = { table = 1, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 1, index = 1 }
+name = "index_apps_by_name"
+on = 1
+columns = [{ column = { table = 1, index = 1 }, op = "Eq", scope = "Partition" }]
+unique = true
+
+[[schema.tables]]
+id = 2
+name = "app_permissions"
+primary_key = { columns = [{ table = 2, index = 0 }], index = { table = 2, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 0 }
+name = "id"
+ty = "I64"
+storage_ty = { Integer = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 2, index = 1 }
+name = "app_id"
+ty = "Bytes"
+storage_ty = "Blob"
+
+[[schema.tables.columns]]
+id = { table = 2, index = 2 }
+name = "user_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 3 }
+name = "level"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 2, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 5 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 2, index = 0 }
+name = "index_app_permissions_by_id"
+on = 2
+columns = [{ column = { table = 2, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 2, index = 1 }
+name = "index_app_permissions_by_app_id"
+on = 2
+columns = [{ column = { table = 2, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables.indices]]
+id = { table = 2, index = 2 }
+name = "index_app_permissions_by_user_id"
+on = 2
+columns = [{ column = { table = 2, index = 2 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 3
+name = "deployments"
+primary_key = { columns = [{ table = 3, index = 0 }], index = { table = 3, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 3, index = 0 }
+name = "id"
+ty = "Bytes"
+storage_ty = "Blob"
+
+[[schema.tables.columns]]
+id = { table = 3, index = 1 }
+name = "app_id"
+ty = "Bytes"
+storage_ty = "Blob"
+
+[[schema.tables.columns]]
+id = { table = 3, index = 2 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 3, index = 3 }
+name = "original_filename"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 3, index = 4 }
+name = "upload_size_bytes"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 3, index = 5 }
+name = "git_info_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 3, index = 6 }
+name = "build_info_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 3, index = 7 }
+name = "container_name"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 3, index = 8 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 3, index = 9 }
+name = "failure_error"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 3, index = 0 }
+name = "index_deployments_by_id"
+on = 3
+columns = [{ column = { table = 3, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 3, index = 1 }
+name = "index_deployments_by_app_id"
+on = 3
+columns = [{ column = { table = 3, index = 1 }, op = "Eq", scope = "Partition" }]

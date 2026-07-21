@@ -72,7 +72,7 @@ async fn enforce_app_access(
     let app_name = params
         .get("name")
         .ok_or_else(|| AppError::AppNotFound(String::new()))?;
-    let app = storage::get_app(&state, app_name)?;
+    let app = storage::get_app(&state, app_name).await?;
     let required = if method == Method::GET || method == Method::HEAD {
         models::PermissionLevel::Read
     } else {
@@ -83,23 +83,27 @@ async fn enforce_app_access(
 }
 
 /// `App` plus the currently active deployment id, derived at read time from
-/// the `active` symlink rather than stored in `app.json`.
+/// the `App` row's `active_deployment_id` column.
 #[derive(Serialize, TS)]
 #[ts(export)]
 pub struct AppView {
+    pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) created_at: jiff::Timestamp,
+    pub(crate) updated_at: jiff::Timestamp,
     pub(crate) active_deployment_id: Option<String>,
     pub(crate) source: AppSource,
     pub(crate) env_vars: Vec<EnvVar>,
     pub(crate) permissions: Vec<AppPermission>,
 }
 
-pub fn app_view(state: &AppState, app: crate::models::App) -> AppView {
-    let active_deployment_id = storage::active_deployment_id(state, &app.name);
+pub async fn app_view(state: &AppState, app: crate::models::App) -> AppView {
+    let active_deployment_id = storage::active_deployment_id(state, &app.name).await;
     AppView {
+        id: app.id,
         name: app.name,
         created_at: app.created_at,
+        updated_at: app.updated_at,
         active_deployment_id,
         source: app.source,
         env_vars: app.env_vars,
@@ -178,14 +182,15 @@ async fn list_apps(
     State(state): State<AppState>,
     current_user: CurrentUser,
 ) -> AppResult<Json<Vec<AppView>>> {
-    let views = storage::list_apps(&state)?
-        .into_iter()
-        .filter(|app| {
-            matches!(current_user.role, AccountRole::Admin)
-                || app.has_permission(&current_user.username, models::PermissionLevel::Read)
-        })
-        .map(|app| app_view(&state, app))
-        .collect();
+    let apps = storage::list_apps(&state).await?;
+    let mut views = Vec::with_capacity(apps.len());
+    for app in apps {
+        if matches!(current_user.role, AccountRole::Admin)
+            || app.has_permission(&current_user.username, models::PermissionLevel::Read)
+        {
+            views.push(app_view(&state, app).await);
+        }
+    }
     Ok(Json(views))
 }
 
@@ -194,33 +199,20 @@ async fn create_app(
     current_user: CurrentUser,
     Json(body): Json<CreateAppRequest>,
 ) -> AppResult<(StatusCode, Json<AppView>)> {
-    let app = storage::create_app(&state, &body.name, body.source, body.env_vars)?;
     // An `Admin` doesn't need an explicit grant (always full access), but a
     // `Member` would otherwise be immediately locked out of what they made.
-    // TODO: this is a second, non-atomic write on top of `create_app`'s -
-    // a crash between the two leaves the app on disk with no grant for its
-    // creator. Fold into a single atomic write once app permissions move
-    // into the DB alongside `users`.
-    let app = if matches!(current_user.role, AccountRole::Member) {
-        storage::add_app_permission(
-            &state,
-            &app.name,
-            &current_user.username,
-            models::PermissionLevel::Write,
-        )?;
-        storage::get_app(&state, &app.name)?
-    } else {
-        app
-    };
-    Ok((StatusCode::CREATED, Json(app_view(&state, app))))
+    let creator =
+        matches!(current_user.role, AccountRole::Member).then_some(current_user.username.as_str());
+    let app = storage::create_app(&state, &body.name, body.source, body.env_vars, creator).await?;
+    Ok((StatusCode::CREATED, Json(app_view(&state, app).await)))
 }
 
 async fn get_app(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> AppResult<Json<AppView>> {
-    let app = storage::get_app(&state, &name)?;
-    Ok(Json(app_view(&state, app)))
+    let app = storage::get_app(&state, &name).await?;
+    Ok(Json(app_view(&state, app).await))
 }
 
 async fn update_app_env_vars(
@@ -228,8 +220,8 @@ async fn update_app_env_vars(
     Path(name): Path<String>,
     Json(body): Json<UpdateAppEnvVarsRequest>,
 ) -> AppResult<Json<AppView>> {
-    let app = storage::update_app_env_vars(&state, &name, body.env_vars)?;
-    Ok(Json(app_view(&state, app)))
+    let app = storage::update_app_env_vars(&state, &name, body.env_vars).await?;
+    Ok(Json(app_view(&state, app).await))
 }
 
 /// Anyone with `Write` on the app (not just `Admin`) can manage who else
@@ -240,8 +232,8 @@ async fn update_app_permissions_endpoint(
     Path(name): Path<String>,
     Json(body): Json<UpdateAppPermissionsRequest>,
 ) -> AppResult<Json<AppView>> {
-    let app = storage::update_app_permissions(&state, &name, body.permissions)?;
-    Ok(Json(app_view(&state, app)))
+    let app = storage::update_app_permissions(&state, &name, body.permissions).await?;
+    Ok(Json(app_view(&state, app).await))
 }
 
 async fn delete_app(
@@ -256,12 +248,12 @@ async fn delete_app(
 /// checked for all of them rather than assumed) before removing the app, so
 /// deleting a run-mode app never leaves an orphaned container behind.
 pub async fn delete_app_with_containers(state: &AppState, app_name: &str) -> AppResult<()> {
-    for deployment in storage::list_deployments(state, app_name)? {
+    for deployment in storage::list_deployments(state, app_name).await? {
         if let Some(container_name) = &deployment.container_name {
             containers::stop_and_remove(state.docker(), container_name).await?;
         }
     }
-    storage::delete_app(state, app_name)
+    storage::delete_app(state, app_name).await
 }
 
 async fn create_deployment(
@@ -277,15 +269,15 @@ async fn create_git_deployment_endpoint(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
 ) -> AppResult<(StatusCode, Json<Deployment>)> {
-    let deployment = start_git_deployment(&state, &app_name)?;
+    let deployment = start_git_deployment(&state, &app_name).await?;
     Ok((StatusCode::ACCEPTED, Json(deployment)))
 }
 
 /// Creates the `Pending` record synchronously, then hands the actual clone/
 /// install/activate work to a detached task - the caller gets the id back
 /// immediately and can attach to `.../logs` while it runs.
-pub fn start_git_deployment(state: &AppState, app_name: &str) -> AppResult<Deployment> {
-    let (deployment, git_source) = storage::create_pending_git_deployment(state, app_name)?;
+pub async fn start_git_deployment(state: &AppState, app_name: &str) -> AppResult<Deployment> {
+    let (deployment, git_source) = storage::create_pending_git_deployment(state, app_name).await?;
 
     tokio::spawn(run_git_deployment(
         state.clone(),
@@ -306,7 +298,7 @@ async fn run_git_deployment(
     if let Err(err) = execute_git_deployment(&state, &app_name, &deployment_id, &git_source).await {
         tracing::error!(error = %err, app_name, deployment_id, "git deployment failed");
         if let Err(fail_err) =
-            storage::fail_git_deployment(&state, &app_name, &deployment_id, &err.to_string())
+            storage::fail_git_deployment(&state, &app_name, &deployment_id, &err.to_string()).await
         {
             tracing::error!(error = %fail_err, app_name, deployment_id, "failed to record git deployment failure");
         }
@@ -322,11 +314,12 @@ async fn execute_git_deployment(
     deployment_id: &str,
     git_source: &GitSource,
 ) -> AppResult<()> {
+    let app = storage::get_app(state, app_name).await?;
     let staging = state.unique_tmp_path("git-deployment");
     let timeout = Duration::from_secs(state.git_fetch_timeout_secs());
 
     let clone_target = LogTarget {
-        path: state.deployment_log_path(app_name, deployment_id, LogKind::Clone),
+        path: state.deployment_log_path(&app.id, deployment_id, LogKind::Clone),
         deployment_id: deployment_id.to_string(),
         kind: LogKind::Clone,
         registry: state.log_registry().clone(),
@@ -361,9 +354,8 @@ async fn execute_git_deployment(
     if let GitDeployMode::Build(build) = &git_source.mode {
         let container_name = containers::container_name(app_name, deployment_id);
         let build_timeout = Duration::from_secs(state.build_timeout_secs());
-        let app = storage::get_app(state, app_name)?;
         let build_target = LogTarget {
-            path: state.deployment_log_path(app_name, deployment_id, LogKind::Build),
+            path: state.deployment_log_path(&app.id, deployment_id, LogKind::Build),
             deployment_id: deployment_id.to_string(),
             kind: LogKind::Build,
             registry: state.log_registry().clone(),
@@ -387,40 +379,23 @@ async fn execute_git_deployment(
         }
     }
 
-    let finish_result = {
-        let blocking_state = state.clone();
-        let blocking_staging = staging.clone();
-        let blocking_checkout_dir = checkout_dir.clone();
-        let app_name = app_name.to_string();
-        let deployment_id = deployment_id.to_string();
-        let git_source = git_source.clone();
-        tokio::task::spawn_blocking(move || {
-            storage::finish_git_deployment(
-                &blocking_state,
-                &blocking_staging,
-                &blocking_checkout_dir,
-                &app_name,
-                &deployment_id,
-                &git_source,
-                commit_sha,
-            )
-        })
-        .await
-    };
-    match finish_result {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            std::fs::remove_dir_all(&staging).ok();
-            return Err(err);
-        }
-        Err(join_err) => {
-            std::fs::remove_dir_all(&staging).ok();
-            return Err(AppError::Io(std::io::Error::other(join_err.to_string())));
-        }
+    if let Err(err) = storage::finish_git_deployment(
+        state,
+        &staging,
+        &checkout_dir,
+        app_name,
+        deployment_id,
+        git_source,
+        commit_sha,
+    )
+    .await
+    {
+        std::fs::remove_dir_all(&staging).ok();
+        return Err(err);
     }
 
     activate_with_containers(state, app_name, deployment_id).await?;
-    storage::mark_git_deployment_ready(state, app_name, deployment_id)
+    storage::mark_git_deployment_ready(state, app_name, deployment_id).await
 }
 
 /// Activates a deployment. For a run-mode app this starts the new
@@ -434,16 +409,16 @@ pub async fn activate_with_containers(
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
-    let app = storage::get_app(state, app_name)?;
+    let app = storage::get_app(state, app_name).await?;
 
     if let Some(run_config) = app.run_config() {
-        let deployment = storage::get_deployment(state, app_name, deployment_id)?;
+        let deployment = storage::get_deployment(state, app_name, deployment_id).await?;
         let container_name = deployment.container_name.ok_or_else(|| {
             AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
         })?;
-        let checkout_dir = state.deployment_files_dir(app_name, deployment_id);
+        let checkout_dir = state.deployment_files_dir(&app.id, deployment_id);
         let install_target = run_config.install_command.is_some().then(|| LogTarget {
-            path: state.deployment_log_path(app_name, deployment_id, LogKind::Install),
+            path: state.deployment_log_path(&app.id, deployment_id, LogKind::Install),
             deployment_id: deployment_id.to_string(),
             kind: LogKind::Install,
             registry: state.log_registry().clone(),
@@ -463,16 +438,16 @@ pub async fn activate_with_containers(
             state.docker(),
             &container_name,
             LogTarget {
-                path: state.deployment_log_path(app_name, deployment_id, LogKind::Run),
+                path: state.deployment_log_path(&app.id, deployment_id, LogKind::Run),
                 deployment_id: deployment_id.to_string(),
                 kind: LogKind::Run,
                 registry: state.log_registry().clone(),
             },
         );
 
-        if let Some(previous_id) = storage::active_deployment_id(state, app_name)
+        if let Some(previous_id) = storage::active_deployment_id(state, app_name).await
             && previous_id != deployment_id
-            && let Ok(previous) = storage::get_deployment(state, app_name, &previous_id)
+            && let Ok(previous) = storage::get_deployment(state, app_name, &previous_id).await
             && let Some(previous_container) = &previous.container_name
             && let Err(err) = containers::stop_and_remove(state.docker(), previous_container).await
         {
@@ -480,7 +455,7 @@ pub async fn activate_with_containers(
         }
     }
 
-    storage::activate_deployment(state, app_name, deployment_id)
+    storage::activate_deployment(state, app_name, deployment_id).await
 }
 
 /// Deleting a run-mode deployment must leave no container behind for it -
@@ -495,10 +470,11 @@ pub async fn delete_deployment_with_containers(
     deployment_id: &str,
 ) -> AppResult<()> {
     let container_name = storage::get_deployment(state, app_name, deployment_id)
+        .await
         .ok()
         .and_then(|deployment| deployment.container_name);
 
-    storage::delete_deployment(state, app_name, deployment_id)?;
+    storage::delete_deployment(state, app_name, deployment_id).await?;
 
     if let Some(container_name) = container_name {
         containers::stop_and_remove(state.docker(), &container_name).await?;
@@ -522,22 +498,14 @@ pub async fn upload_deployment(
         }
     };
 
-    // Extraction is CPU/disk-bound and the `zip` crate's API is synchronous,
-    // so it runs on a blocking thread rather than tying up the async runtime.
-    let blocking_state = state.clone();
-    let blocking_zip_path = zip_path.clone();
-    let app_name = app_name.to_string();
-    let result = tokio::task::spawn_blocking(move || {
-        storage::create_deployment(
-            &blocking_state,
-            &app_name,
-            &blocking_zip_path,
-            original_filename,
-            upload_size_bytes,
-        )
-    })
-    .await
-    .map_err(|err| AppError::Io(std::io::Error::other(err.to_string())))?;
+    let result = storage::create_deployment(
+        state,
+        app_name,
+        &zip_path,
+        original_filename,
+        upload_size_bytes,
+    )
+    .await;
 
     tokio::fs::remove_file(&zip_path).await.ok();
     result
@@ -547,9 +515,9 @@ async fn list_deployments(
     State(state): State<AppState>,
     Path(app_name): Path<String>,
 ) -> AppResult<Json<Vec<DeploymentView>>> {
-    let active_id = storage::active_deployment_id(&state, &app_name);
+    let active_id = storage::active_deployment_id(&state, &app_name).await;
     let mut views = Vec::new();
-    for deployment in storage::list_deployments(&state, &app_name)? {
+    for deployment in storage::list_deployments(&state, &app_name).await? {
         views.push(deployment_view(&state, active_id.as_deref(), deployment).await);
     }
     Ok(Json(views))
@@ -579,8 +547,9 @@ async fn deployment_logs(
     Path((app_name, id)): Path<(String, String)>,
     Query(query): Query<LogsQuery>,
 ) -> AppResult<impl IntoResponse> {
-    storage::get_deployment(&state, &app_name, &id)?;
-    let dir = state.deployment_dir(&app_name, &id);
+    storage::get_deployment(&state, &app_name, &id).await?;
+    let app = storage::get_app(&state, &app_name).await?;
+    let dir = state.deployment_dir(&app.id, &id);
     let active = state.log_registry().active(&id);
 
     let kind = match query.phase {
@@ -617,7 +586,7 @@ async fn deployment_stats(
     State(state): State<AppState>,
     Path((app_name, id)): Path<(String, String)>,
 ) -> AppResult<Json<Option<containers::ContainerStats>>> {
-    let deployment = storage::get_deployment(&state, &app_name, &id)?;
+    let deployment = storage::get_deployment(&state, &app_name, &id).await?;
     let Some(container_name) = deployment.container_name else {
         return Ok(Json(None));
     };

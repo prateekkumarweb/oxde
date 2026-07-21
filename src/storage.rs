@@ -1,6 +1,12 @@
-use std::{io::ErrorKind, path::Path};
+use std::{collections::HashMap, io::ErrorKind, path::Path, str::FromStr};
 
 use jiff::Timestamp;
+use oxde_db::models::{
+    App as DbApp, AppPermission as DbAppPermission, Deployment as DbDeployment, DeploymentState,
+    PermissionLevel as DbPermissionLevel, User as DbUser,
+};
+use toasty::Db;
+use uuid::Uuid;
 
 use crate::{
     containers,
@@ -23,11 +29,138 @@ pub fn sweep_tmp_dir(state: &AppState) -> std::io::Result<()> {
     std::fs::create_dir_all(&tmp_dir)
 }
 
-pub fn create_app(
+async fn find_app_row(db: &mut Db, name: &str) -> AppResult<DbApp> {
+    DbApp::all()
+        .filter(DbApp::fields().name().eq(name))
+        .first()
+        .exec(db)
+        .await?
+        .ok_or_else(|| AppError::AppNotFound(name.to_string()))
+}
+
+async fn find_deployment_row(
+    db: &mut Db,
+    app_id: Uuid,
+    deployment_id: &str,
+) -> AppResult<DbDeployment> {
+    let deployment_id = Uuid::parse_str(deployment_id)
+        .map_err(|_| AppError::DeploymentNotFound(deployment_id.to_string()))?;
+    DbDeployment::all()
+        .filter(
+            DbDeployment::fields()
+                .id()
+                .eq(deployment_id)
+                .and(DbDeployment::fields().app_id().eq(app_id)),
+        )
+        .first()
+        .exec(db)
+        .await?
+        .ok_or_else(|| AppError::DeploymentNotFound(deployment_id.to_string()))
+}
+
+async fn find_user_id(db: &mut Db, username: &str) -> AppResult<i64> {
+    DbUser::all()
+        .filter(DbUser::fields().username().eq(username))
+        .first()
+        .exec(db)
+        .await?
+        .map(|user| user.id)
+        .ok_or_else(|| AppError::UserNotFound(username.to_string()))
+}
+
+/// A user deleted after being granted access leaves an orphaned grant with
+/// no matching `User` row - skipped rather than failing the whole app read.
+async fn load_permissions(db: &mut Db, app_id: Uuid) -> AppResult<Vec<models::AppPermission>> {
+    let rows = DbAppPermission::all()
+        .filter(DbAppPermission::fields().app_id().eq(app_id))
+        .exec(db)
+        .await?;
+
+    let mut user_ids: Vec<i64> = rows.iter().map(|row| row.user_id).collect();
+    user_ids.sort_unstable();
+    user_ids.dedup();
+    let usernames: HashMap<i64, String> = DbUser::all()
+        .filter(DbUser::fields().id().in_list(user_ids))
+        .exec(db)
+        .await?
+        .into_iter()
+        .map(|user| (user.id, user.username))
+        .collect();
+
+    let mut permissions = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(username) = usernames.get(&row.user_id) else {
+            continue;
+        };
+        let level = DbPermissionLevel::from_str(&row.level).map_err(AppError::CorruptData)?;
+        permissions.push(models::AppPermission {
+            username: username.clone(),
+            level: match level {
+                DbPermissionLevel::Read => models::PermissionLevel::Read,
+                DbPermissionLevel::Write => models::PermissionLevel::Write,
+            },
+        });
+    }
+    Ok(permissions)
+}
+
+fn app_from_row(row: DbApp, permissions: Vec<models::AppPermission>) -> AppResult<App> {
+    Ok(App {
+        id: row.id.to_string(),
+        name: row.name,
+        created_at: Timestamp::from_second(row.created_at)?,
+        updated_at: Timestamp::from_second(row.updated_at)?,
+        source: serde_json::from_str(&row.source_json)?,
+        env_vars: serde_json::from_str(&row.env_vars_json)?,
+        permissions,
+    })
+}
+
+async fn app_from_row_with_permissions(db: &mut Db, row: DbApp) -> AppResult<App> {
+    let permissions = load_permissions(db, row.id).await?;
+    app_from_row(row, permissions)
+}
+
+fn deployment_from_row(row: DbDeployment, app_name: &str) -> AppResult<Deployment> {
+    let state_tag = DeploymentState::from_str(&row.status).map_err(AppError::CorruptData)?;
+    let status = match state_tag {
+        DeploymentState::Pending => DeploymentStatus::Pending,
+        DeploymentState::Ready => DeploymentStatus::Ready,
+        DeploymentState::Failed => DeploymentStatus::Failed {
+            error: row.failure_error.unwrap_or_default(),
+        },
+    };
+    let git = row
+        .git_info_json
+        .map(|json| serde_json::from_str::<GitDeploymentInfo>(&json))
+        .transpose()?;
+    let build_info = row
+        .build_info_json
+        .map(|json| serde_json::from_str::<BuildInfo>(&json))
+        .transpose()?;
+
+    Ok(Deployment {
+        id: row.id.to_string(),
+        app: app_name.to_string(),
+        created_at: Timestamp::from_second(row.created_at)?,
+        original_filename: row.original_filename,
+        upload_size_bytes: u64::try_from(row.upload_size_bytes).unwrap_or(0),
+        git,
+        build_info,
+        container_name: row.container_name,
+        status,
+    })
+}
+
+/// `creator`, if given, is granted `Write` access in the same transaction as
+/// the app insert - used so a `Member` who creates an app is never left
+/// locked out of what they just made, without a separate non-atomic write.
+pub async fn create_app(
     state: &AppState,
     name: &str,
     source: AppSource,
     env_vars: Vec<models::EnvVar>,
+    creator: Option<&str>,
 ) -> AppResult<App> {
     models::validate_slug(name)?;
     models::validate_env_vars(&env_vars)?;
@@ -40,252 +173,282 @@ pub fn create_app(
         }
     }
 
-    let staging = state.unique_tmp_path("create-app");
-    std::fs::create_dir(&staging)?;
-    std::fs::create_dir(staging.join("deployments"))?;
-
-    let app = App {
-        name: name.to_string(),
-        created_at: Timestamp::now(),
-        source,
-        env_vars,
-        permissions: Vec::new(),
-    };
-    write_json(&staging.join("app.json"), &app)?;
-
-    // `rename` doubles as the uniqueness check: it fails if the target
-    // already exists.
-    std::fs::rename(&staging, state.apps_dir().join(name)).map_err(|err| {
-        std::fs::remove_dir_all(&staging).ok();
-        match err.kind() {
-            ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty => {
-                AppError::AppAlreadyExists(name.to_string())
-            }
-            _ => AppError::Io(err),
+    let mut db = state.db().clone();
+    let guard = state.write_lock().await;
+    let result = async {
+        if DbApp::all()
+            .filter(DbApp::fields().name().eq(name))
+            .first()
+            .exec(&mut db)
+            .await?
+            .is_some()
+        {
+            return Err(AppError::AppAlreadyExists(name.to_string()));
         }
-    })?;
+        let creator_id = match creator {
+            Some(username) => Some(find_user_id(&mut db, username).await?),
+            None => None,
+        };
 
-    Ok(app)
+        let id = Uuid::now_v7();
+        let staging = state.unique_tmp_path("create-app");
+        std::fs::create_dir(&staging)?;
+        std::fs::create_dir(staging.join("deployments"))?;
+        std::fs::rename(&staging, state.apps_dir().join(id.to_string())).map_err(|err| {
+            std::fs::remove_dir_all(&staging).ok();
+            AppError::Io(err)
+        })?;
+
+        let now = Timestamp::now().as_second();
+        let mut tx = db.transaction().await?;
+        let row = DbApp::create()
+            .id(id)
+            .name(name)
+            .source_json(serde_json::to_string(&source)?)
+            .env_vars_json(serde_json::to_string(&env_vars)?)
+            .created_at(now)
+            .updated_at(now)
+            .exec(&mut tx)
+            .await?;
+        if let Some(user_id) = creator_id {
+            DbAppPermission::create()
+                .app_id(row.id)
+                .user_id(user_id)
+                .level(DbPermissionLevel::Write.as_str())
+                .created_at(now)
+                .updated_at(now)
+                .exec(&mut tx)
+                .await?;
+        }
+        tx.commit().await?;
+
+        let permissions = load_permissions(&mut db, row.id).await?;
+        app_from_row(row, permissions)
+    }
+    .await;
+    drop(guard);
+    result
 }
 
-pub fn list_apps(state: &AppState) -> AppResult<Vec<App>> {
-    let entries = match std::fs::read_dir(state.apps_dir()) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(AppError::Io(err)),
-    };
+pub async fn list_apps(state: &AppState) -> AppResult<Vec<App>> {
+    let mut db = state.db().clone();
+    let mut rows = DbApp::all().exec(&mut db).await?;
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let mut apps: Vec<App> = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let app_json = entry.path().join("app.json");
-        if app_json.is_file() {
-            apps.push(read_json(&app_json)?);
-        }
+    let mut apps = Vec::with_capacity(rows.len());
+    for row in rows {
+        apps.push(app_from_row_with_permissions(&mut db, row).await?);
     }
-    apps.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(apps)
 }
 
-pub fn get_app(state: &AppState, name: &str) -> AppResult<App> {
-    let path = state.apps_dir().join(name).join("app.json");
-    if !path.is_file() {
-        return Err(AppError::AppNotFound(name.to_string()));
-    }
-    read_json(&path)
+pub async fn get_app(state: &AppState, name: &str) -> AppResult<App> {
+    let mut db = state.db().clone();
+    let row = find_app_row(&mut db, name).await?;
+    app_from_row_with_permissions(&mut db, row).await
 }
 
 /// Replaces the full env var list (not a merge by key). Doesn't touch any
 /// running container - new values take effect on the next deploy/start.
-pub fn update_app_env_vars(
+pub async fn update_app_env_vars(
     state: &AppState,
     name: &str,
     env_vars: Vec<models::EnvVar>,
 ) -> AppResult<App> {
     models::validate_env_vars(&env_vars)?;
-    let path = state.apps_dir().join(name).join("app.json");
-    if !path.is_file() {
-        return Err(AppError::AppNotFound(name.to_string()));
-    }
-    let guard = state.write_lock();
-    let mut app: App = read_json(&path)?;
-    app.env_vars = env_vars;
-    write_json(&path, &app)?;
-    drop(guard);
-    Ok(app)
-}
+    let mut db = state.db().clone();
+    let mut row = find_app_row(&mut db, name).await?;
 
-/// Grants `username` `level` access to `app_name` - used to give a
-/// `Member` who creates an app `Write` access to what they just made.
-pub fn add_app_permission(
-    state: &AppState,
-    app_name: &str,
-    username: &str,
-    level: models::PermissionLevel,
-) -> AppResult<()> {
-    let path = state.apps_dir().join(app_name).join("app.json");
-    if !path.is_file() {
-        return Err(AppError::AppNotFound(app_name.to_string()));
-    }
-    let guard = state.write_lock();
-    let mut app: App = read_json(&path)?;
-    app.permissions.push(models::AppPermission {
-        username: username.to_string(),
-        level,
-    });
-    write_json(&path, &app)?;
-    drop(guard);
-    Ok(())
+    let mut update = row.update();
+    update = update
+        .env_vars_json(serde_json::to_string(&env_vars)?)
+        .updated_at(Timestamp::now().as_second());
+    update.exec(&mut db).await?;
+
+    app_from_row_with_permissions(&mut db, row).await
 }
 
 /// Replaces the full permissions list (not a merge) - the same
 /// replace-wholesale pattern as `update_app_env_vars`.
-pub fn update_app_permissions(
+pub async fn update_app_permissions(
     state: &AppState,
     name: &str,
     permissions: Vec<models::AppPermission>,
 ) -> AppResult<App> {
-    let path = state.apps_dir().join(name).join("app.json");
-    if !path.is_file() {
-        return Err(AppError::AppNotFound(name.to_string()));
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, name).await?;
+
+    let mut resolved = Vec::with_capacity(permissions.len());
+    for permission in &permissions {
+        let user_id = find_user_id(&mut db, &permission.username).await?;
+        resolved.push((user_id, permission.level));
     }
-    let guard = state.write_lock();
-    let mut app: App = read_json(&path)?;
-    app.permissions = permissions;
-    write_json(&path, &app)?;
-    drop(guard);
-    Ok(app)
+
+    let now = Timestamp::now().as_second();
+    let mut tx = db.transaction().await?;
+    DbAppPermission::all()
+        .filter(DbAppPermission::fields().app_id().eq(app_row.id))
+        .delete()
+        .exec(&mut tx)
+        .await?;
+    for (user_id, level) in resolved {
+        let db_level = match level {
+            models::PermissionLevel::Read => DbPermissionLevel::Read,
+            models::PermissionLevel::Write => DbPermissionLevel::Write,
+        };
+        DbAppPermission::create()
+            .app_id(app_row.id)
+            .user_id(user_id)
+            .level(db_level.as_str())
+            .created_at(now)
+            .updated_at(now)
+            .exec(&mut tx)
+            .await?;
+    }
+    tx.commit().await?;
+
+    app_from_row_with_permissions(&mut db, app_row).await
 }
 
-pub fn delete_app(state: &AppState, name: &str) -> AppResult<()> {
+pub async fn delete_app(state: &AppState, name: &str) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let guard = state.write_lock().await;
+    let result: AppResult<Uuid> = async {
+        let app_row = find_app_row(&mut db, name).await?;
+
+        DbAppPermission::all()
+            .filter(DbAppPermission::fields().app_id().eq(app_row.id))
+            .delete()
+            .exec(&mut db)
+            .await?;
+        DbApp::all()
+            .filter(DbApp::fields().id().eq(app_row.id))
+            .delete()
+            .exec(&mut db)
+            .await?;
+
+        Ok(app_row.id)
+    }
+    .await;
+    drop(guard);
+    let app_id = result?;
+
     let staging = state.unique_tmp_path("deleted");
-
-    std::fs::rename(state.apps_dir().join(name), &staging).map_err(|err| match err.kind() {
-        ErrorKind::NotFound => AppError::AppNotFound(name.to_string()),
-        _ => AppError::Io(err),
-    })?;
-
+    std::fs::rename(state.apps_dir().join(app_id.to_string()), &staging)?;
     std::fs::remove_dir_all(&staging)?;
     Ok(())
 }
 
-pub fn create_deployment(
+fn stage_deployment_files(
+    staging: &Path,
+    zip_path: &Path,
+    max_uncompressed_bytes: u64,
+) -> AppResult<()> {
+    std::fs::create_dir(staging)?;
+    let files_dir = staging.join("files");
+    std::fs::create_dir(&files_dir)?;
+    let zip_file = std::fs::File::open(zip_path)?;
+    crate::zip_extract::unpack_zip(zip_file, &files_dir, max_uncompressed_bytes)?;
+    Ok(())
+}
+
+pub async fn create_deployment(
     state: &AppState,
     app_name: &str,
     zip_path: &Path,
     original_filename: Option<String>,
     upload_size_bytes: u64,
 ) -> AppResult<Deployment> {
-    let app_dir = state.apps_dir().join(app_name);
-    if !app_dir.is_dir() {
-        return Err(AppError::AppNotFound(app_name.to_string()));
-    }
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, app_name).await?;
 
+    let id = Uuid::now_v7();
     let staging = state.unique_tmp_path("deployment");
-    let deployment = match stage_deployment(
-        state,
-        &staging,
-        app_name,
-        zip_path,
-        original_filename,
-        upload_size_bytes,
-    ) {
-        Ok(deployment) => deployment,
-        Err(err) => {
-            std::fs::remove_dir_all(&staging).ok();
-            return Err(err);
-        }
-    };
+    let blocking_staging = staging.clone();
+    let blocking_zip_path = zip_path.to_path_buf();
+    let max_uncompressed_bytes = state.max_uncompressed_bytes();
+    tokio::task::spawn_blocking(move || {
+        stage_deployment_files(
+            &blocking_staging,
+            &blocking_zip_path,
+            max_uncompressed_bytes,
+        )
+    })
+    .await
+    .map_err(|err| AppError::Io(std::io::Error::other(err.to_string())))?
+    .inspect_err(|_| {
+        std::fs::remove_dir_all(&staging).ok();
+    })?;
 
-    let target = app_dir.join("deployments").join(&deployment.id);
+    let target = state.deployment_dir(&app_row.id.to_string(), &id.to_string());
     std::fs::rename(&staging, &target).map_err(|err| {
         std::fs::remove_dir_all(&staging).ok();
         AppError::Io(err)
     })?;
 
-    activate_deployment(state, app_name, &deployment.id)?;
+    let row = DbDeployment::create()
+        .id(id)
+        .app_id(app_row.id)
+        .created_at(Timestamp::now().as_second())
+        .original_filename(original_filename)
+        .upload_size_bytes(i64::try_from(upload_size_bytes).unwrap_or(i64::MAX))
+        .status(DeploymentState::Ready.as_str())
+        .exec(&mut db)
+        .await?;
+
+    let deployment = deployment_from_row(row, app_name)?;
+    activate_deployment(state, app_name, &deployment.id).await?;
     Ok(deployment)
 }
 
-fn stage_deployment(
-    state: &AppState,
-    staging: &Path,
-    app_name: &str,
-    zip_path: &Path,
-    original_filename: Option<String>,
-    upload_size_bytes: u64,
-) -> AppResult<Deployment> {
-    std::fs::create_dir(staging)?;
-    let files_dir = staging.join("files");
-    std::fs::create_dir(&files_dir)?;
-
-    let zip_file = std::fs::File::open(zip_path)?;
-    crate::zip_extract::unpack_zip(zip_file, &files_dir, state.max_uncompressed_bytes())?;
-
-    let now = Timestamp::now();
-    let deployment = Deployment {
-        id: format!("{}-{}", now.as_millisecond(), state.next_seq()),
-        app: app_name.to_string(),
-        created_at: now,
-        original_filename,
-        upload_size_bytes,
-        git: None,
-        build_info: None,
-        container_name: None,
-        status: DeploymentStatus::Ready,
-    };
-    write_json(&staging.join("deployment.json"), &deployment)?;
-    Ok(deployment)
-}
-
-/// Writes `deployment.json` directly rather than via the stage-then-rename
-/// pattern used elsewhere here - the partial (`Pending`, no `files/`) state
-/// is the point, so a caller can attach to its logs before the rest finishes.
-pub fn create_pending_git_deployment(
+/// Creates the `Pending` record synchronously (no `files/` yet) so a caller
+/// can attach to its logs before the rest finishes.
+pub async fn create_pending_git_deployment(
     state: &AppState,
     app_name: &str,
 ) -> AppResult<(Deployment, GitSource)> {
-    let app = get_app(state, app_name)?;
-    let AppSource::Git(git_source) = app.source else {
-        return Err(AppError::NotGitSourced(app_name.to_string()));
-    };
+    let mut db = state.db().clone();
+    let guard = state.write_lock().await;
+    let result = async {
+        let app_row = find_app_row(&mut db, app_name).await?;
+        let source: AppSource = serde_json::from_str(&app_row.source_json)?;
+        let AppSource::Git(git_source) = source else {
+            return Err(AppError::NotGitSourced(app_name.to_string()));
+        };
 
-    let guard = state.write_lock();
-    let already_pending = list_deployments(state, app_name)?
-        .iter()
-        .any(|deployment| matches!(deployment.status, DeploymentStatus::Pending));
-    if already_pending {
-        drop(guard);
-        return Err(AppError::DeploymentInProgress(app_name.to_string()));
+        let already_pending = DbDeployment::all()
+            .filter(DbDeployment::fields().app_id().eq(app_row.id))
+            .exec(&mut db)
+            .await?
+            .iter()
+            .any(|row| row.status == DeploymentState::Pending.as_str());
+        if already_pending {
+            return Err(AppError::DeploymentInProgress(app_name.to_string()));
+        }
+
+        let id = Uuid::now_v7();
+        let container_name = matches!(git_source.mode, GitDeployMode::Run(_))
+            .then(|| containers::container_name(app_name, &id.to_string()));
+
+        let deployment_dir = state.deployment_dir(&app_row.id.to_string(), &id.to_string());
+        std::fs::create_dir(&deployment_dir)?;
+
+        let row = DbDeployment::create()
+            .id(id)
+            .app_id(app_row.id)
+            .created_at(Timestamp::now().as_second())
+            .upload_size_bytes(0)
+            .container_name(container_name)
+            .status(DeploymentState::Pending.as_str())
+            .exec(&mut db)
+            .await?;
+
+        let deployment = deployment_from_row(row, app_name)?;
+        Ok((deployment, git_source))
     }
-
-    let now = Timestamp::now();
-    let id = format!("{}-{}", now.as_millisecond(), state.next_seq());
-    let container_name = matches!(git_source.mode, GitDeployMode::Run(_))
-        .then(|| containers::container_name(app_name, &id));
-
-    let deployment = Deployment {
-        id: id.clone(),
-        app: app_name.to_string(),
-        created_at: now,
-        original_filename: None,
-        upload_size_bytes: 0,
-        git: None,
-        build_info: None,
-        container_name,
-        status: DeploymentStatus::Pending,
-    };
-
-    let deployment_dir = state
-        .apps_dir()
-        .join(app_name)
-        .join("deployments")
-        .join(&id);
-    std::fs::create_dir(&deployment_dir)?;
-    write_json(&deployment_dir.join("deployment.json"), &deployment)?;
+    .await;
     drop(guard);
-
-    Ok((deployment, git_source))
+    result
 }
 
 /// Clones the checkout but does *not* move it into `staging/files` yet - a
@@ -316,7 +479,7 @@ pub fn clone_repo(
 /// `Ready` (`mark_git_deployment_ready`) only after activation, so
 /// install/build-command logs stay attached to this deployment the whole
 /// time.
-pub fn finish_git_deployment(
+pub async fn finish_git_deployment(
     state: &AppState,
     staging: &Path,
     checkout_dir: &Path,
@@ -344,40 +507,45 @@ pub fn finish_git_deployment(
     }
 
     let content_size = dir_size_bytes(&staging.join("files"))?;
-    let deployment_dir = state
-        .apps_dir()
-        .join(app_name)
-        .join("deployments")
-        .join(deployment_id);
+
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, app_name).await?;
+    let deployment_dir = state.deployment_dir(&app_row.id.to_string(), deployment_id);
     std::fs::rename(staging.join("files"), deployment_dir.join("files"))?;
 
-    let mut deployment: Deployment = read_json(&deployment_dir.join("deployment.json"))?;
-    deployment.git = Some(GitDeploymentInfo {
+    let mut deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
+    let git_info_json = serde_json::to_string(&GitDeploymentInfo {
         commit_sha,
         branch: git_source.branch.clone(),
-    });
-    deployment.build_info = match &git_source.mode {
-        GitDeployMode::Build(build) => Some(BuildInfo {
+    })?;
+    let build_info_json = match &git_source.mode {
+        GitDeployMode::Build(build) => Some(serde_json::to_string(&BuildInfo {
             image: build.image,
             command: build.command.clone(),
-        }),
+        })?),
         GitDeployMode::Static { .. } | GitDeployMode::Run(_) => None,
     };
-    deployment.upload_size_bytes = content_size;
-    write_json(&deployment_dir.join("deployment.json"), &deployment)?;
+
+    let mut update = deployment_row.update();
+    update = update
+        .git_info_json(Some(git_info_json))
+        .build_info_json(build_info_json)
+        .upload_size_bytes(i64::try_from(content_size).unwrap_or(i64::MAX));
+    update.exec(&mut db).await?;
+
     std::fs::remove_dir_all(staging).ok();
     Ok(())
 }
 
-pub fn mark_git_deployment_ready(
+pub async fn mark_git_deployment_ready(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
-    set_deployment_status(state, app_name, deployment_id, DeploymentStatus::Ready)
+    set_deployment_status(state, app_name, deployment_id, DeploymentStatus::Ready).await
 }
 
-pub fn fail_git_deployment(
+pub async fn fail_git_deployment(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
@@ -391,22 +559,31 @@ pub fn fail_git_deployment(
             error: error.to_string(),
         },
     )
+    .await
 }
 
-fn set_deployment_status(
+async fn set_deployment_status(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
     status: DeploymentStatus,
 ) -> AppResult<()> {
-    let deployment_dir = state
-        .apps_dir()
-        .join(app_name)
-        .join("deployments")
-        .join(deployment_id);
-    let mut deployment: Deployment = read_json(&deployment_dir.join("deployment.json"))?;
-    deployment.status = status;
-    write_json(&deployment_dir.join("deployment.json"), &deployment)
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, app_name).await?;
+    let mut deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
+
+    let (state_tag, failure_error) = match status {
+        DeploymentStatus::Pending => (DeploymentState::Pending, None),
+        DeploymentStatus::Ready => (DeploymentState::Ready, None),
+        DeploymentStatus::Failed { error } => (DeploymentState::Failed, Some(error)),
+    };
+
+    let mut update = deployment_row.update();
+    update = update
+        .status(state_tag.as_str())
+        .failure_error(failure_error);
+    update.exec(&mut db).await?;
+    Ok(())
 }
 
 fn dir_size_bytes(dir: &Path) -> AppResult<u64> {
@@ -423,97 +600,93 @@ fn dir_size_bytes(dir: &Path) -> AppResult<u64> {
     Ok(total)
 }
 
-pub fn list_deployments(state: &AppState, app_name: &str) -> AppResult<Vec<Deployment>> {
-    let deployments_dir = state.apps_dir().join(app_name).join("deployments");
-    let entries = match std::fs::read_dir(&deployments_dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => {
-            return Err(AppError::AppNotFound(app_name.to_string()));
-        }
-        Err(err) => return Err(AppError::Io(err)),
-    };
-
-    let mut deployments: Vec<Deployment> = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let deployment_json = entry.path().join("deployment.json");
-        if deployment_json.is_file() {
-            deployments.push(read_json(&deployment_json)?);
-        }
-    }
-    deployments.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(deployments)
+pub async fn list_deployments(state: &AppState, app_name: &str) -> AppResult<Vec<Deployment>> {
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, app_name).await?;
+    let mut rows = DbDeployment::all()
+        .filter(DbDeployment::fields().app_id().eq(app_row.id))
+        .exec(&mut db)
+        .await?;
+    rows.sort_by_key(|row| row.id);
+    rows.into_iter()
+        .map(|row| deployment_from_row(row, app_name))
+        .collect()
 }
 
-pub fn get_deployment(
+pub async fn get_deployment(
     state: &AppState,
     app_name: &str,
     deployment_id: &str,
 ) -> AppResult<Deployment> {
-    let path = state
-        .apps_dir()
-        .join(app_name)
-        .join("deployments")
-        .join(deployment_id)
-        .join("deployment.json");
-    if !path.is_file() {
-        return Err(AppError::DeploymentNotFound(deployment_id.to_string()));
-    }
-    read_json(&path)
+    let mut db = state.db().clone();
+    let app_row = find_app_row(&mut db, app_name).await?;
+    let row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
+    deployment_from_row(row, app_name)
 }
 
-/// The active deployment id, derived by reading the `active` symlink rather
-/// than stored anywhere - so there's exactly one source of truth for "live".
-pub fn active_deployment_id(state: &AppState, app_name: &str) -> Option<String> {
-    let target = std::fs::read_link(state.apps_dir().join(app_name).join("active")).ok()?;
-    target.file_name()?.to_str().map(str::to_string)
+/// The active deployment id, read from the `App` row's `active_deployment_id`
+/// column rather than derived from anything on disk.
+pub async fn active_deployment_id(state: &AppState, app_name: &str) -> Option<String> {
+    let mut db = state.db().clone();
+    let row = find_app_row(&mut db, app_name).await.ok()?;
+    row.active_deployment_id.map(|id| id.to_string())
 }
 
-pub fn activate_deployment(state: &AppState, app_name: &str, deployment_id: &str) -> AppResult<()> {
-    let app_dir = state.apps_dir().join(app_name);
-    let deployment_dir = app_dir.join("deployments").join(deployment_id);
-    if !deployment_dir.is_dir() {
-        return Err(AppError::DeploymentNotFound(deployment_id.to_string()));
-    }
+pub async fn activate_deployment(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let mut app_row = find_app_row(&mut db, app_name).await?;
+    let deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
 
-    let guard = state.write_lock();
-    let tmp_link = state.unique_tmp_path("active-link");
-    std::os::unix::fs::symlink(Path::new("deployments").join(deployment_id), &tmp_link)?;
-    std::fs::rename(&tmp_link, app_dir.join("active"))?;
-    drop(guard);
+    let mut update = app_row.update();
+    update = update
+        .active_deployment_id(Some(deployment_row.id))
+        .updated_at(Timestamp::now().as_second());
+    update.exec(&mut db).await?;
     Ok(())
 }
 
-pub fn delete_deployment(state: &AppState, app_name: &str, deployment_id: &str) -> AppResult<()> {
-    let deployments_dir = state.apps_dir().join(app_name).join("deployments");
-    let staging = state.unique_tmp_path("deleted-deployment");
-
-    let guard = state.write_lock();
-    if active_deployment_id(state, app_name).as_deref() == Some(deployment_id) {
-        return Err(AppError::DeleteActiveDeployment);
-    }
-    std::fs::rename(deployments_dir.join(deployment_id), &staging).map_err(|err| {
-        match err.kind() {
-            ErrorKind::NotFound => AppError::DeploymentNotFound(deployment_id.to_string()),
-            _ => AppError::Io(err),
+pub async fn delete_deployment(
+    state: &AppState,
+    app_name: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let guard = state.write_lock().await;
+    let result: AppResult<Uuid> = async {
+        let app_row = find_app_row(&mut db, app_name).await?;
+        if app_row
+            .active_deployment_id
+            .map(|id| id.to_string())
+            .as_deref()
+            == Some(deployment_id)
+        {
+            return Err(AppError::DeleteActiveDeployment);
         }
-    })?;
+        let deployment_row = find_deployment_row(&mut db, app_row.id, deployment_id).await?;
+
+        DbDeployment::all()
+            .filter(DbDeployment::fields().id().eq(deployment_row.id))
+            .delete()
+            .exec(&mut db)
+            .await?;
+
+        Ok(app_row.id)
+    }
+    .await;
     drop(guard);
+    let app_id = result?;
 
+    let deployments_dir = state.deployment_dir(&app_id.to_string(), deployment_id);
+    let staging = state.unique_tmp_path("deleted-deployment");
+    std::fs::rename(&deployments_dir, &staging).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => AppError::DeploymentNotFound(deployment_id.to_string()),
+        _ => AppError::Io(err),
+    })?;
     std::fs::remove_dir_all(&staging)?;
-    Ok(())
-}
-
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> AppResult<T> {
-    let contents = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&contents)?)
-}
-
-fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> AppResult<()> {
-    let contents = serde_json::to_string_pretty(value)?;
-    let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, contents)?;
-    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -532,7 +705,7 @@ mod tests {
     };
 
     /// A fresh `AppState` over its own tempdir, so tests never share state.
-    fn test_state(label: &str) -> AppState {
+    async fn test_state(label: &str) -> AppState {
         let dir = std::env::temp_dir().join(format!(
             "oxde-test-storage-{label}-{}-{}",
             std::process::id(),
@@ -540,17 +713,12 @@ mod tests {
         ));
         std::fs::create_dir_all(dir.join("apps")).expect("create apps dir");
         std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
-        let db = tokio::runtime::Runtime::new()
-            .expect("build test runtime")
-            .block_on(async {
-                let db = oxde_db::connect(&dir)
-                    .await
-                    .expect("connect test accounts database");
-                oxde_db::apply_migrations(&db)
-                    .await
-                    .expect("apply test accounts database migrations");
-                db
-            });
+        let db = oxde_db::connect(&dir)
+            .await
+            .expect("connect test accounts database");
+        oxde_db::apply_migrations(&db)
+            .await
+            .expect("apply test accounts database migrations");
         AppState::new(
             dir,
             AppStateLimits {
@@ -586,28 +754,32 @@ mod tests {
         writer.finish().expect("finish zip").into_inner()
     }
 
-    #[test]
-    fn create_list_get_app_round_trip() {
-        let state = test_state("round-trip");
+    #[tokio::test]
+    async fn create_list_get_app_round_trip() {
+        let state = test_state("round-trip").await;
 
-        let created =
-            create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
+        let created = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
         assert_eq!(created.name, "blog");
 
-        let fetched = get_app(&state, "blog").expect("get_app");
+        let fetched = get_app(&state, "blog").await.expect("get_app");
         assert_eq!(fetched.name, "blog");
 
-        let listed = list_apps(&state).expect("list_apps");
+        let listed = list_apps(&state).await.expect("list_apps");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "blog");
     }
 
-    #[test]
-    fn duplicate_create_is_rejected_and_leaves_tmp_clean() {
-        let state = test_state("duplicate-create");
-        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("first create_app");
+    #[tokio::test]
+    async fn duplicate_create_is_rejected_and_leaves_tmp_clean() {
+        let state = test_state("duplicate-create").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("first create_app");
 
-        let err = create_app(&state, "blog", AppSource::Upload, Vec::new())
+        let err = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
             .expect_err("duplicate create must fail");
         assert!(matches!(err, AppError::AppAlreadyExists(_)));
 
@@ -620,86 +792,122 @@ mod tests {
         );
     }
 
-    #[test]
-    fn delete_app_removes_it() {
-        let state = test_state("delete-app");
-        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
+    #[tokio::test]
+    async fn delete_app_removes_it() {
+        let state = test_state("delete-app").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
 
-        delete_app(&state, "blog").expect("delete_app");
+        delete_app(&state, "blog").await.expect("delete_app");
 
-        let err = get_app(&state, "blog").expect_err("app should be gone");
+        let err = get_app(&state, "blog")
+            .await
+            .expect_err("app should be gone");
         assert!(matches!(err, AppError::AppNotFound(_)));
     }
 
-    #[test]
-    fn delete_app_on_missing_app_is_not_found() {
-        let state = test_state("delete-missing-app");
-        let err = delete_app(&state, "nope").expect_err("deleting a missing app must fail");
+    #[tokio::test]
+    async fn delete_app_on_missing_app_is_not_found() {
+        let state = test_state("delete-missing-app").await;
+        let err = delete_app(&state, "nope")
+            .await
+            .expect_err("deleting a missing app must fail");
         assert!(matches!(err, AppError::AppNotFound(_)));
     }
 
-    #[test]
-    fn deployment_lifecycle_activate_and_delete() {
-        let state = test_state("deployment-lifecycle");
-        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
+    #[tokio::test]
+    async fn deployment_lifecycle_activate_and_delete() {
+        let state = test_state("deployment-lifecycle").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
 
         let zip_v1 = state.tmp_dir().join("v1.zip");
         std::fs::write(&zip_v1, tiny_zip(b"v1")).expect("write v1 zip");
-        let v1 = create_deployment(&state, "blog", &zip_v1, None, 2).expect("create v1");
+        let v1 = create_deployment(&state, "blog", &zip_v1, None, 2)
+            .await
+            .expect("create v1");
 
         let zip_v2 = state.tmp_dir().join("v2.zip");
         std::fs::write(&zip_v2, tiny_zip(b"v2")).expect("write v2 zip");
-        let v2 = create_deployment(&state, "blog", &zip_v2, None, 2).expect("create v2");
+        let v2 = create_deployment(&state, "blog", &zip_v2, None, 2)
+            .await
+            .expect("create v2");
 
         // Uploading auto-activates, so the newest deployment should be live.
         assert_eq!(
-            super::active_deployment_id(&state, "blog"),
+            super::active_deployment_id(&state, "blog").await,
             Some(v2.id.clone())
         );
 
-        let deployments = list_deployments(&state, "blog").expect("list_deployments");
+        let deployments = list_deployments(&state, "blog")
+            .await
+            .expect("list_deployments");
         assert_eq!(deployments.len(), 2);
 
         // Rolling back to v1 must actually flip the active pointer.
-        activate_deployment(&state, "blog", &v1.id).expect("activate v1");
+        activate_deployment(&state, "blog", &v1.id)
+            .await
+            .expect("activate v1");
         assert_eq!(
-            super::active_deployment_id(&state, "blog"),
+            super::active_deployment_id(&state, "blog").await,
             Some(v1.id.clone())
         );
 
         // The active deployment can never be deleted directly...
-        let err = delete_deployment(&state, "blog", &v1.id).expect_err("deleting active must fail");
+        let err = delete_deployment(&state, "blog", &v1.id)
+            .await
+            .expect_err("deleting active must fail");
         assert!(matches!(err, AppError::DeleteActiveDeployment));
 
         // ...but a non-active one can be, and it disappears from the listing.
-        delete_deployment(&state, "blog", &v2.id).expect("delete v2");
-        let remaining = list_deployments(&state, "blog").expect("list_deployments after delete");
+        delete_deployment(&state, "blog", &v2.id)
+            .await
+            .expect("delete v2");
+        let remaining = list_deployments(&state, "blog")
+            .await
+            .expect("list_deployments after delete");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, v1.id);
     }
 
-    #[test]
-    fn sweep_tmp_dir_finishes_an_interrupted_delete() {
-        let state = test_state("sweep-recovery");
-        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
+    #[tokio::test]
+    async fn sweep_tmp_dir_finishes_an_interrupted_delete() {
+        let state = test_state("sweep-recovery").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
 
         let zip = state.tmp_dir().join("v1.zip");
         std::fs::write(&zip, tiny_zip(b"v1")).expect("write zip");
-        let deployment =
-            create_deployment(&state, "blog", &zip, None, 2).expect("create deployment");
+        let deployment = create_deployment(&state, "blog", &zip, None, 2)
+            .await
+            .expect("create deployment");
 
-        // Simulate a crash between delete_deployment's rename-out-of-apps/
-        // step and its remove_dir_all: do the rename ourselves and stop.
-        let deployment_dir = state
-            .apps_dir()
-            .join("blog")
-            .join("deployments")
-            .join(&deployment.id);
+        let app = get_app(&state, "blog").await.expect("get_app");
+
+        // Simulate a crash between delete_deployment's DB-row delete and its
+        // remove_dir_all: delete the row and do the rename ourselves, then stop.
+        let mut db = state.db().clone();
+        let deployment_uuid = uuid::Uuid::parse_str(&deployment.id).expect("parse deployment id");
+        oxde_db::models::Deployment::all()
+            .filter(
+                oxde_db::models::Deployment::fields()
+                    .id()
+                    .eq(deployment_uuid),
+            )
+            .delete()
+            .exec(&mut db)
+            .await
+            .expect("delete deployment row");
+        let deployment_dir = state.deployment_dir(&app.id, &deployment.id);
         let orphan = state.tmp_dir().join("orphaned-partial-delete");
         std::fs::rename(&deployment_dir, &orphan).expect("simulate interrupted delete");
 
         assert!(
             list_deployments(&state, "blog")
+                .await
                 .expect("list_deployments")
                 .is_empty(),
             "deployment must already be invisible before the sweep runs"
@@ -716,19 +924,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_git_deployment_on_upload_app_is_rejected() {
-        let state = test_state("git-not-sourced");
-        create_app(&state, "blog", AppSource::Upload, Vec::new()).expect("create_app");
+    #[tokio::test]
+    async fn create_git_deployment_on_upload_app_is_rejected() {
+        let state = test_state("git-not-sourced").await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+            .await
+            .expect("create_app");
 
-        let err =
-            create_pending_git_deployment(&state, "blog").expect_err("upload app must be rejected");
+        let err = create_pending_git_deployment(&state, "blog")
+            .await
+            .expect_err("upload app must be rejected");
         assert!(matches!(err, AppError::NotGitSourced(_)));
     }
 
-    #[test]
-    fn create_pending_git_deployment_is_rejected_while_one_is_already_pending() {
-        let state = test_state("git-deploy-in-progress");
+    #[tokio::test]
+    async fn create_pending_git_deployment_is_rejected_while_one_is_already_pending() {
+        let state = test_state("git-deploy-in-progress").await;
         create_app(
             &state,
             "site",
@@ -738,14 +949,18 @@ mod tests {
                 mode: GitDeployMode::default(),
             }),
             Vec::new(),
+            None,
         )
+        .await
         .expect("create_app");
 
-        let (first, _) =
-            create_pending_git_deployment(&state, "site").expect("first pending deploy");
+        let (first, _) = create_pending_git_deployment(&state, "site")
+            .await
+            .expect("first pending deploy");
         assert!(matches!(first.status, DeploymentStatus::Pending));
 
         let err = create_pending_git_deployment(&state, "site")
+            .await
             .expect_err("a second deploy while one is pending must be rejected");
         assert!(matches!(err, AppError::DeploymentInProgress(_)));
     }

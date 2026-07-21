@@ -71,6 +71,10 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Timestamp(#[from] jiff::Error),
+    #[error("corrupt database row: {0}")]
+    CorruptData(String),
 }
 
 #[derive(Serialize)]
@@ -111,6 +115,8 @@ impl IntoResponse for AppError {
             | Self::Io(_)
             | Self::Json(_)
             | Self::PasswordHash(_)
+            | Self::Timestamp(_)
+            | Self::CorruptData(_)
             | Self::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         // 4xx are routine (bad input, no session yet, no permission) - only

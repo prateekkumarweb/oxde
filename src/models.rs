@@ -6,8 +6,10 @@ use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct App {
+    pub id: String,
     pub name: String,
     pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default)]
     pub source: AppSource,
     /// Injected into run-mode containers and install/build commands.

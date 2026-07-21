@@ -3330,6 +3330,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+ "uuid",
  "zip",
 ]
 
@@ -3341,6 +3342,7 @@ dependencies = [
  "toasty",
  "toasty-core",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
