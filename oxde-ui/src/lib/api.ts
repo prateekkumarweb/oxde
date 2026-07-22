@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import type {
+  ApiTokenView,
   AppPermission,
   AppSource,
   AppView,
   ContainerStats,
+  CreateApiTokenResponse,
   DeploymentView,
   EnvVar,
   LogKind,
@@ -29,6 +31,12 @@ interface UpdateUserInput {
   password?: string;
 }
 
+interface CreateApiTokenInput {
+  name: string;
+  /** Epoch seconds. */
+  expires_at: number;
+}
+
 interface Api {
   listApps: () => Promise<AppView[]>;
   createApp: (input: CreateAppInput) => Promise<AppView>;
@@ -41,6 +49,9 @@ interface Api {
   updateUser: (username: string, input: UpdateUserInput) => Promise<UserView>;
   deleteUser: (username: string) => Promise<void>;
   changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  listApiTokens: () => Promise<ApiTokenView[]>;
+  createApiToken: (input: CreateApiTokenInput) => Promise<CreateApiTokenResponse>;
+  revokeApiToken: (id: number) => Promise<void>;
   listDeployments: (appName: string) => Promise<DeploymentView[]>;
   uploadDeployment: (appName: string, file: File) => Promise<DeploymentView>;
   deployFromGit: (appName: string) => Promise<DeploymentView>;
@@ -115,6 +126,17 @@ export function useApi(): Api {
           }),
         }),
 
+      listApiTokens: () => request("/users/me/tokens"),
+
+      createApiToken: (input) =>
+        request("/users/me/tokens", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+
+      revokeApiToken: (id) => request(`/users/me/tokens/${id}`, { method: "DELETE" }),
+
       listDeployments: (appName) => request(`/apps/${encodeURIComponent(appName)}/deployments`),
 
       uploadDeployment: (appName, file) => {
@@ -156,10 +178,12 @@ export function useApi(): Api {
 }
 
 export type {
+  ApiTokenView,
   AppPermission,
   AppSource,
   AppView,
   ContainerStats,
+  CreateApiTokenResponse,
   DeploymentView,
   RunConfig,
   UserView,

@@ -17,7 +17,7 @@ use ts_rs::TS;
 
 use crate::{
     accounts::AccountRole,
-    auth::CurrentUser,
+    auth::ApiUser,
     authz, containers,
     deployment_logs::{self, LogKind, LogTarget},
     error::{AppError, AppResult},
@@ -64,7 +64,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
 async fn enforce_app_access(
     State(state): State<AppState>,
     Path(params): Path<HashMap<String, String>>,
-    current_user: CurrentUser,
+    current_user: ApiUser,
     method: Method,
     request: Request,
     next: Next,
@@ -180,7 +180,7 @@ struct UpdateAppPermissionsRequest {
 
 async fn list_apps(
     State(state): State<AppState>,
-    current_user: CurrentUser,
+    current_user: ApiUser,
 ) -> AppResult<Json<Vec<AppView>>> {
     let apps = storage::list_apps(&state).await?;
     let mut views = Vec::with_capacity(apps.len());
@@ -196,7 +196,7 @@ async fn list_apps(
 
 async fn create_app(
     State(state): State<AppState>,
-    current_user: CurrentUser,
+    current_user: ApiUser,
     Json(body): Json<CreateAppRequest>,
 ) -> AppResult<(StatusCode, Json<AppView>)> {
     // An `Admin` doesn't need an explicit grant (always full access), but a

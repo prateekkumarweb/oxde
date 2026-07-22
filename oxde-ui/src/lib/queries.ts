@@ -10,6 +10,7 @@ const deploymentsKey = (name: string) => ["apps", name, "deployments"] as const;
 const deploymentStatsKey = (name: string, id: string) =>
   ["apps", name, "deployments", id, "stats"] as const;
 const usersKey = () => ["users"] as const;
+const apiTokensKey = () => ["apiTokens"] as const;
 
 function appsOptions(api: Api) {
   return queryOptions({ queryKey: appsKey(), queryFn: api.listApps });
@@ -114,6 +115,32 @@ export function useDeleteUser() {
   return useMutation({
     mutationFn: (username: string) => api.deleteUser(username),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: usersKey() }),
+  });
+}
+
+function apiTokensOptions(api: Api) {
+  return queryOptions({ queryKey: apiTokensKey(), queryFn: api.listApiTokens });
+}
+
+export function useApiTokens() {
+  return useQuery(apiTokensOptions(useApi()));
+}
+
+export function useCreateApiToken() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; expires_at: number }) => api.createApiToken(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: apiTokensKey() }),
+  });
+}
+
+export function useRevokeApiToken() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.revokeApiToken(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: apiTokensKey() }),
   });
 }
 

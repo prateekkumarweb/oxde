@@ -7,8 +7,10 @@ use oxde_db::models::User;
 
 use crate::{
     accounts::{self, AccountRole},
+    api_tokens,
     error::AppError,
     state::AppState,
+    storage,
 };
 
 pub const SESSION_COOKIE: &str = "oxde_session";
@@ -33,10 +35,13 @@ pub fn generate_session_token() -> String {
 }
 
 /// The authenticated user for the current request, resolved from the
-/// session cookie. Re-reads the user's role from the database on every
-/// request (not cached in the session) so a role change or deletion takes
-/// effect immediately rather than only on next login.
+/// session cookie only - never a bearer token, so a token can never mint
+/// or revoke other tokens (see [`ApiUser`] for routes that accept both).
+/// Re-reads the user's role from the database on every request (not
+/// cached in the session) so a role change or deletion takes effect
+/// immediately rather than only on next login.
 pub struct CurrentUser {
+    pub id: i64,
     pub username: String,
     pub role: AccountRole,
 }
@@ -50,39 +55,46 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = AppState::from_ref(state);
-
-        let token =
-            cookie_value(&parts.headers, SESSION_COOKIE).ok_or(AppError::Unauthenticated)?;
-
-        let username = {
-            let mut sessions = state
-                .sessions()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let session = sessions.get(&token).ok_or(AppError::Unauthenticated)?;
-            if accounts::now_epoch_secs() - session.created_at > SESSION_MAX_AGE_SECS {
-                sessions.remove(&token);
-                drop(sessions);
-                return Err(AppError::Unauthenticated);
-            }
-            session.username.clone()
-        };
-
-        let mut db = state.db().clone();
-        let user = User::all()
-            .filter(User::fields().username().eq(&username))
-            .first()
-            .exec(&mut db)
-            .await
-            .map_err(AppError::Db)?
-            .ok_or(AppError::Unauthenticated)?;
-
-        let role = accounts::user_role(&user)?;
-        Ok(Self {
-            username: user.username,
-            role,
-        })
+        let username = resolve_cookie_username(&state, &parts.headers)?;
+        load_current_user(&state, &username).await
     }
+}
+
+fn resolve_cookie_username(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Result<String, AppError> {
+    let token = cookie_value(headers, SESSION_COOKIE).ok_or(AppError::Unauthenticated)?;
+
+    let mut sessions = state
+        .sessions()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let session = sessions.get(&token).ok_or(AppError::Unauthenticated)?;
+    if accounts::now_epoch_secs() - session.created_at > SESSION_MAX_AGE_SECS {
+        sessions.remove(&token);
+        drop(sessions);
+        return Err(AppError::Unauthenticated);
+    }
+    Ok(session.username.clone())
+}
+
+async fn load_current_user(state: &AppState, username: &str) -> Result<CurrentUser, AppError> {
+    let mut db = state.db().clone();
+    let user = User::all()
+        .filter(User::fields().username().eq(username))
+        .first()
+        .exec(&mut db)
+        .await
+        .map_err(AppError::Db)?
+        .ok_or(AppError::Unauthenticated)?;
+
+    let role = accounts::user_role(&user)?;
+    Ok(CurrentUser {
+        id: user.id,
+        username: user.username,
+        role,
+    })
 }
 
 impl CurrentUser {
@@ -92,6 +104,55 @@ impl CurrentUser {
             AccountRole::Member => Err(AppError::Forbidden("admin access required".to_string())),
         }
     }
+}
+
+/// Like [`CurrentUser`], but also accepts an API bearer token, checked
+/// before falling back to the cookie. `Deref`s to `CurrentUser`.
+pub struct ApiUser(pub CurrentUser);
+
+impl std::ops::Deref for ApiUser {
+    type Target = CurrentUser;
+
+    fn deref(&self) -> &CurrentUser {
+        &self.0
+    }
+}
+
+impl<S> FromRequestParts<S> for ApiUser
+where
+    AppState: axum::extract::FromRef<S>,
+    S: Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state = AppState::from_ref(state);
+
+        if let Some(bearer) = bearer_token(&parts.headers) {
+            let (token_id, secret) =
+                api_tokens::parse_bearer_value(&bearer).ok_or(AppError::Unauthenticated)?;
+            let user = storage::find_user_by_api_token(&app_state, token_id, secret)
+                .await?
+                .ok_or(AppError::Unauthenticated)?;
+            let role = accounts::user_role(&user)?;
+            return Ok(Self(CurrentUser {
+                id: user.id,
+                username: user.username,
+                role,
+            }));
+        }
+
+        let username = resolve_cookie_username(&app_state, &parts.headers)?;
+        Ok(Self(load_current_user(&app_state, &username).await?))
+    }
+}
+
+fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    value.strip_prefix("Bearer ").map(str::to_string)
 }
 
 pub fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {

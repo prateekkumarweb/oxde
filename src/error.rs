@@ -41,6 +41,10 @@ pub enum AppError {
     UserNotFound(String),
     #[error("user already exists: {0}")]
     UserAlreadyExists(String),
+    #[error("invalid token expiry: must be in the future and within the configured maximum")]
+    InvalidTokenExpiry(i64),
+    #[error("token not found")]
+    TokenNotFound,
     #[error("invalid credentials")]
     InvalidCredentials,
     #[error("password hashing failed: {0}")]
@@ -85,9 +89,10 @@ struct ErrorBody {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match &self {
-            Self::AppNotFound(_) | Self::DeploymentNotFound(_) | Self::UserNotFound(_) => {
-                StatusCode::NOT_FOUND
-            }
+            Self::AppNotFound(_)
+            | Self::DeploymentNotFound(_)
+            | Self::UserNotFound(_)
+            | Self::TokenNotFound => StatusCode::NOT_FOUND,
             Self::AppAlreadyExists(_)
             | Self::DeleteActiveDeployment
             | Self::DeploymentInProgress(_)
@@ -102,6 +107,7 @@ impl IntoResponse for AppError {
             | Self::InvalidUsername(_)
             | Self::InvalidRole(_)
             | Self::InvalidPassword(_)
+            | Self::InvalidTokenExpiry(_)
             | Self::NoContainer(_)
             | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
             Self::InvalidCredentials | Self::Unauthenticated => StatusCode::UNAUTHORIZED,

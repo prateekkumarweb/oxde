@@ -19,6 +19,8 @@ pub struct Config {
     pub install_timeout_secs: u64,
     #[serde(default = "default_build_timeout_secs")]
     pub build_timeout_secs: u64,
+    #[serde(default = "default_api_token_max_expiry_days")]
+    pub api_token_max_expiry_days: i64,
 }
 
 const fn default_max_upload_bytes() -> u64 {
@@ -39,6 +41,10 @@ const fn default_install_timeout_secs() -> u64 {
 
 const fn default_build_timeout_secs() -> u64 {
     300
+}
+
+const fn default_api_token_max_expiry_days() -> i64 {
+    30
 }
 
 impl Config {

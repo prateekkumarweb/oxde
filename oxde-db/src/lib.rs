@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::Path};
 
 pub mod models;
 
-use models::{App, AppPermission, Deployment, User};
+use models::{ApiToken, App, AppPermission, Deployment, User};
 pub use toasty;
 
 /// Opens (creating the file if needed) the SQLite-compatible database file
@@ -16,7 +16,13 @@ pub async fn connect(data_dir: &Path) -> anyhow::Result<toasty::Db> {
     let url = format!("turso:{}", db_path.display());
 
     let mut builder = toasty::Db::builder();
-    builder.models(toasty::models!(User, App, AppPermission, Deployment));
+    builder.models(toasty::models!(
+        User,
+        App,
+        AppPermission,
+        Deployment,
+        ApiToken
+    ));
     Ok(builder.connect(&url).await?)
 }
 

@@ -7,6 +7,8 @@ export type { EnvVar } from "./generated/EnvVar";
 export type { AppPermission } from "./generated/AppPermission";
 export type { PermissionLevel } from "./generated/PermissionLevel";
 export type { UserView } from "./generated/UserView";
+export type { ApiTokenView } from "./generated/ApiTokenView";
+export type { CreateApiTokenResponse } from "./generated/CreateApiTokenResponse";
 export type { AppView } from "./generated/AppView";
 export type { ContainerStatus } from "./generated/ContainerStatus";
 export type { DeploymentStatus } from "./generated/DeploymentStatus";

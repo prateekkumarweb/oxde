@@ -29,6 +29,13 @@ const RootLayout = () => {
                   Users
                 </Link>
               )}
+              <Link
+                to="/settings"
+                className="text-sm text-muted-foreground hover:text-foreground"
+                activeProps={{ className: "text-foreground" }}
+              >
+                Settings
+              </Link>
             </div>
             <div className="flex items-center gap-2">
               {user && <span className="text-sm text-muted-foreground">{user.username}</span>}

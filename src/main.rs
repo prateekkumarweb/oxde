@@ -1,4 +1,5 @@
 mod accounts;
+mod api_tokens;
 mod auth;
 mod authz;
 mod config;
@@ -67,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
             git_fetch_timeout_secs: config.git_fetch_timeout_secs,
             install_timeout_secs: config.install_timeout_secs,
             build_timeout_secs: config.build_timeout_secs,
+            api_token_max_expiry_days: config.api_token_max_expiry_days,
         },
         docker,
         reverse_proxy::new_client(),

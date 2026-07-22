@@ -5,7 +5,11 @@ use axum::{
 };
 use tower_http::trace::TraceLayer;
 
-use crate::{auth::CurrentUser, dashboard_assets, state::AppState};
+use crate::{
+    auth::{ApiUser, CurrentUser},
+    dashboard_assets,
+    state::AppState,
+};
 
 pub mod api;
 pub mod apps;
@@ -16,8 +20,12 @@ mod users;
 pub fn build_router(state: AppState) -> Router {
     let public_api = Router::new().nest("/api", auth_routes::public_router());
 
-    let protected_api = Router::new()
-        .nest("/api", api::router(&state))
+    // Cookie or bearer token; `/api/users` below stays cookie-only.
+    let bearer_or_cookie_api = Router::new().nest("/api", api::router(&state)).route_layer(
+        middleware::from_fn_with_state(state.clone(), require_authenticated_bearer_or_cookie),
+    );
+
+    let cookie_only_api = Router::new()
         .nest("/api", auth_routes::protected_router())
         .nest("/api/users", users::router())
         .route_layer(middleware::from_fn_with_state(
@@ -27,7 +35,8 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .merge(public_api)
-        .merge(protected_api)
+        .merge(bearer_or_cookie_api)
+        .merge(cookie_only_api)
         .route(
             "/",
             get(|| async { Redirect::to("/dashboard").into_response() }),
@@ -49,6 +58,16 @@ pub fn build_router(state: AppState) -> Router {
 /// `require_admin` calls in `routes::users`).
 async fn require_authenticated(
     _current_user: CurrentUser,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    next.run(request).await
+}
+
+/// Same gate as `require_authenticated`, but via `ApiUser` so a valid API
+/// bearer token satisfies it too, not just the session cookie.
+async fn require_authenticated_bearer_or_cookie(
+    _current_user: ApiUser,
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {

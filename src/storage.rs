@@ -7,8 +7,9 @@ use std::{
 
 use jiff::Timestamp;
 use oxde_db::models::{
-    App as DbApp, AppPermission as DbAppPermission, Deployment as DbDeployment, DeploymentState,
-    PermissionLevel as DbPermissionLevel, User as DbUser,
+    ApiToken as DbApiToken, App as DbApp, AppPermission as DbAppPermission,
+    Deployment as DbDeployment, DeploymentState, PermissionLevel as DbPermissionLevel,
+    User as DbUser,
 };
 use toasty::Db;
 use uuid::Uuid;
@@ -157,13 +158,92 @@ async fn find_user_id(db: &mut Db, username: &str) -> AppResult<i64> {
         .ok_or_else(|| AppError::UserNotFound(username.to_string()))
 }
 
+pub async fn create_api_token(
+    state: &AppState,
+    user_id: i64,
+    name: &str,
+    expires_at: i64,
+) -> AppResult<(DbApiToken, String)> {
+    let now = Timestamp::now().as_second();
+    crate::api_tokens::validate_expiry(now, expires_at, state.api_token_max_expiry_days())?;
+
+    let (token_id, secret, token_hash) = crate::api_tokens::generate()?;
+    let mut db = state.db().clone();
+    let row = DbApiToken::create()
+        .user_id(user_id)
+        .name(name)
+        .token_id(&token_id)
+        .token_hash(token_hash)
+        .expires_at(expires_at)
+        .revoked(false)
+        .created_at(now)
+        .updated_at(now)
+        .exec(&mut db)
+        .await?;
+
+    let plaintext = crate::api_tokens::format_token(&token_id, &secret);
+    Ok((row, plaintext))
+}
+
+pub async fn list_api_tokens(state: &AppState, user_id: i64) -> AppResult<Vec<DbApiToken>> {
+    let mut db = state.db().clone();
+    Ok(DbApiToken::all()
+        .filter(DbApiToken::fields().user_id().eq(user_id))
+        .exec(&mut db)
+        .await?)
+}
+
+/// Scoped to `user_id` as well as `id` - never lets a user revoke another
+/// user's token by guessing an id.
+pub async fn revoke_api_token(state: &AppState, user_id: i64, token_row_id: i64) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let mut token = DbApiToken::all()
+        .filter(DbApiToken::fields().id().eq(token_row_id))
+        .filter(DbApiToken::fields().user_id().eq(user_id))
+        .first()
+        .exec(&mut db)
+        .await?
+        .ok_or(AppError::TokenNotFound)?;
+
+    token
+        .update()
+        .revoked(true)
+        .updated_at(Timestamp::now().as_second())
+        .exec(&mut db)
+        .await?;
+    Ok(())
+}
+
+/// Used only by `auth::ApiUser`'s bearer path.
+pub async fn find_user_by_api_token(
+    state: &AppState,
+    token_id: &str,
+    secret: &str,
+) -> AppResult<Option<DbUser>> {
+    let mut db = state.db().clone();
+    let Some(token) = DbApiToken::all()
+        .filter(DbApiToken::fields().token_id().eq(token_id))
+        .first()
+        .exec(&mut db)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    if token.revoked || token.expires_at <= Timestamp::now().as_second() {
+        return Ok(None);
+    }
+    if !crate::api_tokens::verify_secret(secret, &token.token_hash) {
+        return Ok(None);
+    }
+
+    Ok(Some(token.user().exec(&mut db).await?))
+}
+
 /// A user deleted after being granted access leaves an orphaned grant with
 /// no matching `User` row - skipped rather than failing the whole app read.
-async fn load_permissions(db: &mut Db, app_id: Uuid) -> AppResult<Vec<models::AppPermission>> {
-    let rows = DbAppPermission::all()
-        .filter(DbAppPermission::fields().app_id().eq(app_id))
-        .exec(db)
-        .await?;
+async fn load_permissions(db: &mut Db, app_row: &DbApp) -> AppResult<Vec<models::AppPermission>> {
+    let rows = app_row.permissions().exec(db).await?;
 
     let mut user_ids: Vec<i64> = rows.iter().map(|row| row.user_id).collect();
     user_ids.sort_unstable();
@@ -206,7 +286,7 @@ fn app_from_row(row: DbApp, permissions: Vec<models::AppPermission>) -> AppResul
 }
 
 async fn app_from_row_with_permissions(db: &mut Db, row: DbApp) -> AppResult<App> {
-    let permissions = load_permissions(db, row.id).await?;
+    let permissions = load_permissions(db, &row).await?;
     app_from_row(row, permissions)
 }
 
@@ -311,7 +391,7 @@ pub async fn create_app(
         }
         tx.commit().await?;
 
-        let permissions = load_permissions(&mut db, row.id).await?;
+        let permissions = load_permissions(&mut db, &row).await?;
         app_from_row(row, permissions)
     }
     .await;
@@ -852,6 +932,7 @@ mod tests {
                 git_fetch_timeout_secs: 60,
                 install_timeout_secs: 300,
                 build_timeout_secs: 300,
+                api_token_max_expiry_days: 30,
             },
             // None of these tests exercise container behavior, so this
             // just needs to construct - `connect_with_http` doesn't touch

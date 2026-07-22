@@ -1,3 +1,5 @@
+use toasty::Deferred;
+
 #[derive(Debug, Clone, toasty::Model)]
 pub struct User {
     #[key]
@@ -12,6 +14,10 @@ pub struct User {
     pub role: String,
     pub created_at: i64,
     pub updated_at: i64,
+    #[has_many]
+    pub app_permissions: Deferred<Vec<AppPermission>>,
+    #[has_many]
+    pub api_tokens: Deferred<Vec<ApiToken>>,
 }
 
 #[derive(Debug, Clone, toasty::Model)]
@@ -29,6 +35,10 @@ pub struct App {
     pub active_deployment_id: Option<uuid::Uuid>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[has_many]
+    pub permissions: Deferred<Vec<AppPermission>>,
+    #[has_many]
+    pub deployments: Deferred<Vec<Deployment>>,
 }
 
 #[derive(Debug, Clone, toasty::Model)]
@@ -43,6 +53,32 @@ pub struct AppPermission {
     pub level: String,
     pub created_at: i64,
     pub updated_at: i64,
+    #[belongs_to(key = app_id, references = id)]
+    pub app: Deferred<App>,
+    #[belongs_to(key = user_id, references = id)]
+    pub user: Deferred<User>,
+}
+
+#[derive(Debug, Clone, toasty::Model)]
+pub struct ApiToken {
+    #[key]
+    #[auto]
+    pub id: i64,
+    #[index]
+    pub user_id: i64,
+    pub name: String,
+    /// Non-secret lookup key; the secret half is only ever stored hashed
+    /// (`token_hash`), since a hash can't be looked up by equality.
+    #[unique]
+    pub token_id: String,
+    pub token_hash: String,
+    pub expires_at: i64,
+    /// Revocation flips this rather than deleting the row.
+    pub revoked: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[belongs_to(key = user_id, references = id)]
+    pub user: Deferred<User>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +124,8 @@ pub struct Deployment {
     pub container_name: Option<String>,
     pub status: String,
     pub failure_error: Option<String>,
+    #[belongs_to(key = app_id, references = id)]
+    pub app: Deferred<App>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

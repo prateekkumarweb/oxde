@@ -2,9 +2,9 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, patch},
+    routing::{delete, get, patch},
 };
-use oxde_db::models::User;
+use oxde_db::models::{ApiToken as DbApiToken, User};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -13,6 +13,7 @@ use crate::{
     auth::{self, CurrentUser},
     error::{AppError, AppResult},
     state::AppState,
+    storage,
 };
 
 #[derive(Serialize, TS)]
@@ -26,6 +27,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_users).post(create_user))
         .route("/me/password", patch(change_own_password))
+        .route("/me/tokens", get(list_own_tokens).post(create_own_token))
+        .route("/me/tokens/{id}", delete(revoke_own_token))
         .route("/{username}", patch(update_user).delete(delete_user))
 }
 
@@ -218,5 +221,82 @@ async fn change_own_password(
         .map_err(AppError::Db)?;
 
     auth::revoke_sessions_for(&state, &current_user.username);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct ApiTokenView {
+    pub id: i64,
+    pub name: String,
+    pub expires_at: i64,
+    pub revoked: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Returned only from `create_own_token` - `plaintext_token` is shown
+/// exactly once and never recoverable afterward (only its hash is stored).
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct CreateApiTokenResponse {
+    pub token: ApiTokenView,
+    pub plaintext_token: String,
+}
+
+#[derive(Deserialize)]
+struct CreateApiTokenRequest {
+    name: String,
+    /// Epoch seconds.
+    expires_at: i64,
+}
+
+fn api_token_view(token: DbApiToken) -> ApiTokenView {
+    ApiTokenView {
+        id: token.id,
+        name: token.name,
+        expires_at: token.expires_at,
+        revoked: token.revoked,
+        created_at: token.created_at,
+        updated_at: token.updated_at,
+    }
+}
+
+/// `CurrentUser`, not `ApiUser`: a token must never be usable to create,
+/// list, or revoke other tokens.
+async fn list_own_tokens(
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+) -> AppResult<Json<Vec<ApiTokenView>>> {
+    let tokens = storage::list_api_tokens(&state, current_user.id).await?;
+    Ok(Json(tokens.into_iter().map(api_token_view).collect()))
+}
+
+async fn create_own_token(
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+    Json(body): Json<CreateApiTokenRequest>,
+) -> AppResult<(StatusCode, Json<CreateApiTokenResponse>)> {
+    if body.name.trim().is_empty() {
+        return Err(AppError::InvalidName(body.name));
+    }
+    let (row, plaintext_token) =
+        storage::create_api_token(&state, current_user.id, body.name.trim(), body.expires_at)
+            .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiTokenResponse {
+            token: api_token_view(row),
+            plaintext_token,
+        }),
+    ))
+}
+
+async fn revoke_own_token(
+    State(state): State<AppState>,
+    current_user: CurrentUser,
+    Path(id): Path<i64>,
+) -> AppResult<StatusCode> {
+    storage::revoke_api_token(&state, current_user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
