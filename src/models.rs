@@ -49,7 +49,7 @@ impl PermissionLevel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct EnvVar {
     pub key: String,
@@ -76,7 +76,7 @@ impl App {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[derive(Default)]
 #[ts(export)]
@@ -86,7 +86,7 @@ pub enum AppSource {
     Git(GitSource),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct GitSource {
     pub repo_url: String,
@@ -96,7 +96,7 @@ pub struct GitSource {
 }
 
 /// The three ways a git-sourced app can be served - exactly one at a time.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum GitDeployMode {
@@ -114,7 +114,7 @@ impl Default for GitDeployMode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct BuildConfig {
     pub image: RunImage,
@@ -122,7 +122,7 @@ pub struct BuildConfig {
     pub output_dir: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct RunConfig {
     pub image: RunImage,
@@ -132,7 +132,7 @@ pub struct RunConfig {
     pub container_port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum RunImage {

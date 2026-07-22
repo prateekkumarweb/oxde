@@ -136,7 +136,7 @@ pub enum ContainerStatus {
     Unknown,
 }
 
-async fn deployment_view(
+pub async fn deployment_view(
     state: &AppState,
     active_id: Option<&str>,
     deployment: Deployment,

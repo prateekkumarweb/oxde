@@ -26,3 +26,9 @@ base_domain = "example.com"
 
 # How long a build command may run before being cancelled, in seconds.
 # build_timeout_secs = 300
+
+# Max days out an API token's expiry (set from /settings) can be.
+# api_token_max_expiry_days = 30
+
+# Exposes an MCP endpoint at /mcp, authenticated via /settings API tokens.
+# enable_mcp = false

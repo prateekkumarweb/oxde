@@ -21,6 +21,8 @@ pub struct Config {
     pub build_timeout_secs: u64,
     #[serde(default = "default_api_token_max_expiry_days")]
     pub api_token_max_expiry_days: i64,
+    #[serde(default)]
+    pub enable_mcp: bool,
 }
 
 const fn default_max_upload_bytes() -> u64 {

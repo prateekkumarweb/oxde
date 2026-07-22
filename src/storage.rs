@@ -933,6 +933,7 @@ mod tests {
                 install_timeout_secs: 300,
                 build_timeout_secs: 300,
                 api_token_max_expiry_days: 30,
+                enable_mcp: false,
             },
             // None of these tests exercise container behavior, so this
             // just needs to construct - `connect_with_http` doesn't touch

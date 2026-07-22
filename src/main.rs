@@ -69,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
             install_timeout_secs: config.install_timeout_secs,
             build_timeout_secs: config.build_timeout_secs,
             api_token_max_expiry_days: config.api_token_max_expiry_days,
+            enable_mcp: config.enable_mcp,
         },
         docker,
         reverse_proxy::new_client(),

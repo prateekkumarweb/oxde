@@ -15,6 +15,7 @@ pub mod api;
 pub mod apps;
 mod auth_routes;
 mod host_routing;
+mod mcp;
 mod users;
 
 pub fn build_router(state: AppState) -> Router {
@@ -33,10 +34,15 @@ pub fn build_router(state: AppState) -> Router {
             require_authenticated,
         ));
 
-    Router::new()
+    let mut router = Router::new()
         .merge(public_api)
         .merge(bearer_or_cookie_api)
-        .merge(cookie_only_api)
+        .merge(cookie_only_api);
+    if state.enable_mcp() {
+        router = router.merge(mcp::router(&state));
+    }
+
+    router
         .route(
             "/",
             get(|| async { Redirect::to("/dashboard").into_response() }),

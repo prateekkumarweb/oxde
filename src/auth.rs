@@ -40,6 +40,7 @@ pub fn generate_session_token() -> String {
 /// Re-reads the user's role from the database on every request (not
 /// cached in the session) so a role change or deletion takes effect
 /// immediately rather than only on next login.
+#[derive(Clone)]
 pub struct CurrentUser {
     pub id: i64,
     pub username: String,

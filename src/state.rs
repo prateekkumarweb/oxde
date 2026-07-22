@@ -34,6 +34,7 @@ struct Inner {
     install_timeout_secs: u64,
     build_timeout_secs: u64,
     api_token_max_expiry_days: i64,
+    enable_mcp: bool,
     docker: Docker,
     proxy_client: ProxyClient,
     container_ips: Mutex<HashMap<String, (String, Instant)>>,
@@ -52,6 +53,7 @@ pub struct AppStateLimits {
     pub install_timeout_secs: u64,
     pub build_timeout_secs: u64,
     pub api_token_max_expiry_days: i64,
+    pub enable_mcp: bool,
 }
 
 impl AppState {
@@ -74,6 +76,7 @@ impl AppState {
                 install_timeout_secs: limits.install_timeout_secs,
                 build_timeout_secs: limits.build_timeout_secs,
                 api_token_max_expiry_days: limits.api_token_max_expiry_days,
+                enable_mcp: limits.enable_mcp,
                 docker,
                 proxy_client,
                 container_ips: Mutex::new(HashMap::new()),
@@ -150,6 +153,10 @@ impl AppState {
 
     pub fn api_token_max_expiry_days(&self) -> i64 {
         self.inner.api_token_max_expiry_days
+    }
+
+    pub fn enable_mcp(&self) -> bool {
+        self.inner.enable_mcp
     }
 
     pub fn apps_dir(&self) -> PathBuf {
