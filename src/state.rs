@@ -1,14 +1,14 @@
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use bollard::Docker;
+use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use crate::{deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
@@ -37,9 +37,9 @@ struct Inner {
     enable_mcp: bool,
     docker: Docker,
     proxy_client: ProxyClient,
-    container_ips: Mutex<HashMap<String, (String, Instant)>>,
+    container_ips: ConcurrentHashMap<String, (String, Instant)>,
     db: toasty::Db,
-    sessions: Mutex<HashMap<String, crate::auth::Session>>,
+    sessions: ConcurrentHashMap<String, crate::auth::Session>,
     log_registry: LogRegistry,
 }
 
@@ -79,9 +79,9 @@ impl AppState {
                 enable_mcp: limits.enable_mcp,
                 docker,
                 proxy_client,
-                container_ips: Mutex::new(HashMap::new()),
+                container_ips: ConcurrentHashMap::new(),
                 db,
-                sessions: Mutex::new(HashMap::new()),
+                sessions: ConcurrentHashMap::new(),
                 log_registry: LogRegistry::new(),
             }),
         }
@@ -95,7 +95,7 @@ impl AppState {
         &self.inner.db
     }
 
-    pub fn sessions(&self) -> &Mutex<HashMap<String, crate::auth::Session>> {
+    pub fn sessions(&self) -> &ConcurrentHashMap<String, crate::auth::Session> {
         &self.inner.sessions
     }
 
@@ -108,23 +108,20 @@ impl AppState {
     }
 
     pub fn cached_container_ip(&self, container_name: &str) -> Option<String> {
-        let cache = self
-            .inner
+        self.inner
             .container_ips
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        cache.get(container_name).and_then(|(ip, cached_at)| {
-            (cached_at.elapsed() < CONTAINER_IP_TTL).then(|| ip.clone())
-        })
+            .pin()
+            .get(container_name)
+            .and_then(|(ip, cached_at)| {
+                (cached_at.elapsed() < CONTAINER_IP_TTL).then(|| ip.clone())
+            })
     }
 
     pub fn cache_container_ip(&self, container_name: &str, ip: String) {
-        let mut cache = self
-            .inner
+        self.inner
             .container_ips
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        cache.insert(container_name.to_string(), (ip, Instant::now()));
+            .pin()
+            .insert(container_name.to_string(), (ip, Instant::now()));
     }
 
     pub fn max_upload_bytes(&self) -> u64 {

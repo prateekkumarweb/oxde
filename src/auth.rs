@@ -67,17 +67,16 @@ fn resolve_cookie_username(
 ) -> Result<String, AppError> {
     let token = cookie_value(headers, SESSION_COOKIE).ok_or(AppError::Unauthenticated)?;
 
-    let mut sessions = state
-        .sessions()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let sessions = state.sessions().pin();
     let session = sessions.get(&token).ok_or(AppError::Unauthenticated)?;
-    if accounts::now_epoch_secs() - session.created_at > SESSION_MAX_AGE_SECS {
+    let expired = accounts::now_epoch_secs() - session.created_at > SESSION_MAX_AGE_SECS;
+    let username = session.username.clone();
+
+    if expired {
         sessions.remove(&token);
-        drop(sessions);
         return Err(AppError::Unauthenticated);
     }
-    Ok(session.username.clone())
+    Ok(username)
 }
 
 async fn load_current_user(state: &AppState, username: &str) -> Result<CurrentUser, AppError> {
@@ -168,20 +167,18 @@ pub fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<Strin
 /// change, password change/reset, and account deletion so a stale session
 /// can't keep working past that point.
 pub fn revoke_sessions_for(state: &AppState, username: &str) {
-    let mut sessions = state
+    state
         .sessions()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    sessions.retain(|_, session| session.username != username);
+        .pin()
+        .retain(|_, session| session.username != username);
 }
 
 /// Like [`revoke_sessions_for`], but keeps `keep_token`'s session alive.
 pub fn revoke_other_sessions_for(state: &AppState, username: &str, keep_token: &str) {
-    let mut sessions = state
+    state
         .sessions()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    sessions.retain(|token, session| session.username != username || token == keep_token);
+        .pin()
+        .retain(|token, session| session.username != username || token == keep_token);
 }
 
 /// `httpOnly`/`Secure`/`SameSite=Lax`, scoped to the whole domain (not just

@@ -50,17 +50,13 @@ async fn login(
     }
 
     let token = auth::generate_session_token();
-    state
-        .sessions()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            token.clone(),
-            Session {
-                username: user.username.clone(),
-                created_at: accounts::now_epoch_secs(),
-            },
-        );
+    state.sessions().pin().insert(
+        token.clone(),
+        Session {
+            username: user.username.clone(),
+            created_at: accounts::now_epoch_secs(),
+        },
+    );
 
     let (header_name, header_value) =
         auth::session_cookie_header(&token, auth::SESSION_MAX_AGE_SECS);
@@ -75,11 +71,7 @@ async fn login(
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     if let Some(token) = auth::cookie_value(&headers, auth::SESSION_COOKIE) {
-        state
-            .sessions()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&token);
+        state.sessions().pin().remove(&token);
     }
     let (header_name, header_value) = auth::clear_session_cookie_header();
     [(header_name, header_value)]
