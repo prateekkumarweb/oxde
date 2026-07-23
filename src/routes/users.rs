@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{delete, get, patch},
 };
 use oxde_db::models::{ApiToken as DbApiToken, User};
@@ -137,6 +137,11 @@ async fn update_user(
         update = update.role(role.as_str());
     }
     if let Some(password) = &body.password {
+        if username == current_user.username {
+            return Err(AppError::Forbidden(
+                "use the password change form in Settings for your own account".to_string(),
+            ));
+        }
         accounts::validate_password(password)?;
         update = update.password_hash(accounts::hash_password(password)?);
     }
@@ -197,6 +202,7 @@ struct ChangePasswordRequest {
 async fn change_own_password(
     State(state): State<AppState>,
     current_user: CurrentUser,
+    headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> AppResult<StatusCode> {
     let mut db = state.db().clone();
@@ -220,7 +226,9 @@ async fn change_own_password(
         .await
         .map_err(AppError::Db)?;
 
-    auth::revoke_sessions_for(&state, &current_user.username);
+    if let Some(token) = auth::cookie_value(&headers, auth::SESSION_COOKIE) {
+        auth::revoke_other_sessions_for(&state, &current_user.username, &token);
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

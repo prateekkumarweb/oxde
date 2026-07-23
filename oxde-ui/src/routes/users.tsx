@@ -128,9 +128,10 @@ function UserRow({ username, role }: { username: string; role: string }) {
   const deleteUser = useDeleteUser();
   const isSelf = currentUser?.username === username;
   const error = updateUser.error ?? deleteUser.error;
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   return (
-    <div className="flex flex-col gap-1 rounded-lg border p-3">
+    <div className="flex flex-col gap-3 rounded-lg border p-3">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <span className="font-medium">{username}</span>
@@ -150,6 +151,15 @@ function UserRow({ username, role }: { username: string; role: string }) {
           <Button
             variant="outline"
             size="sm"
+            disabled={isSelf}
+            title={isSelf ? "Change your own password from Settings" : undefined}
+            onClick={() => setShowResetPassword((v) => !v)}
+          >
+            Reset password
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             disabled={isSelf || deleteUser.isPending}
             title={isSelf ? "You can't delete your own account" : undefined}
             onClick={() => deleteUser.mutate(username)}
@@ -158,11 +168,42 @@ function UserRow({ username, role }: { username: string; role: string }) {
           </Button>
         </div>
       </div>
+      {showResetPassword && !isSelf && (
+        <ResetPasswordForm username={username} onDone={() => setShowResetPassword(false)} />
+      )}
       {error && (
         <p className="text-sm text-destructive">
           {error instanceof ApiError ? error.message : "Action failed"}
         </p>
       )}
     </div>
+  );
+}
+
+function ResetPasswordForm({ username, onDone }: { username: string; onDone: () => void }) {
+  const updateUser = useUpdateUser();
+  const [password, setPassword] = useState("");
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    updateUser.mutate({ username, password }, { onSuccess: onDone });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={`reset-password-${username}`}>New password</Label>
+        <Input
+          id={`reset-password-${username}`}
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          required
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={updateUser.isPending}>
+        {updateUser.isPending ? "Setting…" : "Set password"}
+      </Button>
+    </form>
   );
 }

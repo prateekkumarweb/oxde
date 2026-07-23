@@ -175,6 +175,15 @@ pub fn revoke_sessions_for(state: &AppState, username: &str) {
     sessions.retain(|_, session| session.username != username);
 }
 
+/// Like [`revoke_sessions_for`], but keeps `keep_token`'s session alive.
+pub fn revoke_other_sessions_for(state: &AppState, username: &str, keep_token: &str) {
+    let mut sessions = state
+        .sessions()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    sessions.retain(|token, session| session.username != username || token == keep_token);
+}
+
 /// `httpOnly`/`Secure`/`SameSite=Lax`, scoped to the whole domain (not just
 /// `/dashboard` or `/api`) so it's sent on every `OxDe` request. Not scoped to
 /// `base_domain` specifically since the session is only ever meaningful on

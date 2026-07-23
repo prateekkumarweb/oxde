@@ -7,7 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/auth";
-import { useApiTokens, useCreateApiToken, useRevokeApiToken } from "@/lib/queries";
+import {
+  useApiTokens,
+  useChangeOwnPassword,
+  useCreateApiToken,
+  useRevokeApiToken,
+} from "@/lib/queries";
 import type { ApiTokenView } from "@/lib/types";
 
 export const Route = createFileRoute("/settings")({
@@ -32,6 +37,11 @@ function SettingsPage() {
       <h1 className="font-heading text-2xl font-semibold">Settings</h1>
 
       <div className="flex flex-col gap-3">
+        <h2 className="text-lg font-medium">Password</h2>
+        <ChangePasswordForm />
+      </div>
+
+      <div className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">API tokens</h2>
         {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -44,6 +54,84 @@ function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ChangePasswordForm() {
+  const changePassword = useChangeOwnPassword();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const mismatch = confirmPassword.length > 0 && newPassword !== confirmPassword;
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      return;
+    }
+    changePassword.mutate(
+      { currentPassword, newPassword },
+      {
+        onSuccess: () => {
+          setCurrentPassword("");
+          setNewPassword("");
+          setConfirmPassword("");
+        },
+      },
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="current-password">Current password</Label>
+            <Input
+              id="current-password"
+              type="password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="new-password">New password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              required
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <Input
+              id="confirm-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+            />
+          </div>
+          <Button type="submit" disabled={changePassword.isPending || mismatch}>
+            {changePassword.isPending ? "Changing…" : "Change password"}
+          </Button>
+          {mismatch && <p className="w-full text-sm text-destructive">Passwords don't match.</p>}
+          {changePassword.isSuccess && (
+            <p className="w-full text-sm text-muted-foreground">Password changed.</p>
+          )}
+          {changePassword.error && (
+            <p className="w-full text-sm text-destructive">
+              {changePassword.error instanceof ApiError
+                ? changePassword.error.message
+                : "Failed to change password"}
+            </p>
+          )}
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
