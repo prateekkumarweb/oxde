@@ -29,6 +29,15 @@ const RootLayout = () => {
                   Users
                 </Link>
               )}
+              {user?.role === "admin" && (
+                <Link
+                  to="/host"
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                  activeProps={{ className: "text-foreground" }}
+                >
+                  Host
+                </Link>
+              )}
               <Link
                 to="/settings"
                 className="text-sm text-muted-foreground hover:text-foreground"

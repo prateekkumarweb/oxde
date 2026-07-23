@@ -8,6 +8,7 @@ mod dashboard_assets;
 mod deployment_logs;
 mod error;
 mod git_fetch;
+mod host_stats;
 mod models;
 mod reverse_proxy;
 mod routes;

@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
@@ -157,6 +157,10 @@ impl AppState {
 
     pub fn enable_mcp(&self) -> bool {
         self.inner.enable_mcp
+    }
+
+    pub fn data_dir(&self) -> &Path {
+        &self.inner.data_dir
     }
 
     pub fn apps_dir(&self) -> PathBuf {

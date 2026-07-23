@@ -14,4 +14,5 @@ export type { ContainerStatus } from "./generated/ContainerStatus";
 export type { DeploymentStatus } from "./generated/DeploymentStatus";
 export type { DeploymentView } from "./generated/DeploymentView";
 export type { ContainerStats } from "./generated/ContainerStats";
+export type { HostStats } from "./generated/HostStats";
 export type { LogKind } from "./generated/LogKind";

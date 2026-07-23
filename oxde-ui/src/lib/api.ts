@@ -9,6 +9,7 @@ import type {
   CreateApiTokenResponse,
   DeploymentView,
   EnvVar,
+  HostStats,
   LogKind,
   RunConfig,
   UserView,
@@ -63,6 +64,7 @@ interface Api {
     options: { phase: LogKind; follow: boolean; signal?: AbortSignal },
   ) => Promise<Response>;
   getDeploymentStats: (appName: string, id: string) => Promise<ContainerStats | null>;
+  getHostStats: () => Promise<HostStats>;
 }
 
 export function useApi(): Api {
@@ -172,6 +174,8 @@ export function useApi(): Api {
 
       getDeploymentStats: (appName, id) =>
         request(`/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/stats`),
+
+      getHostStats: () => request("/host/stats"),
     }),
     [request, requestStream],
   );
@@ -185,6 +189,7 @@ export type {
   ContainerStats,
   CreateApiTokenResponse,
   DeploymentView,
+  HostStats,
   RunConfig,
   UserView,
 };

@@ -11,6 +11,7 @@ const deploymentStatsKey = (name: string, id: string) =>
   ["apps", name, "deployments", id, "stats"] as const;
 const usersKey = () => ["users"] as const;
 const apiTokensKey = () => ["apiTokens"] as const;
+const hostStatsKey = () => ["host", "stats"] as const;
 
 function appsOptions(api: Api) {
   return queryOptions({ queryKey: appsKey(), queryFn: api.listApps });
@@ -51,6 +52,18 @@ function deploymentStatsOptions(api: Api, name: string, deploymentId: string) {
 
 export function useDeploymentStats(name: string, deploymentId: string) {
   return useQuery(deploymentStatsOptions(useApi(), name, deploymentId));
+}
+
+function hostStatsOptions(api: Api) {
+  return queryOptions({
+    queryKey: hostStatsKey(),
+    queryFn: api.getHostStats,
+    refetchInterval: 2000,
+  });
+}
+
+export function useHostStats(enabled: boolean) {
+  return useQuery({ ...hostStatsOptions(useApi()), enabled });
 }
 
 export function useCreateApp() {

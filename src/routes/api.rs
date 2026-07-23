@@ -21,6 +21,7 @@ use crate::{
     authz, containers,
     deployment_logs::{self, LogKind, LogTarget},
     error::{AppError, AppResult},
+    host_stats::{self, HostStats},
     models::{self, AppPermission, AppSource, Deployment, EnvVar, GitDeployMode, GitSource},
     state::AppState,
     storage,
@@ -54,6 +55,18 @@ pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/apps", get(list_apps).post(create_app))
         .nest("/apps/{name}", app_scoped)
+        .route("/host/stats", get(host_stats_endpoint))
+}
+
+/// Admin-only: host CPU/memory/disk, not per-app, so it isn't behind
+/// `enforce_app_access` - gated here directly instead.
+async fn host_stats_endpoint(
+    State(state): State<AppState>,
+    current_user: ApiUser,
+) -> AppResult<Json<HostStats>> {
+    current_user.require_admin()?;
+    let host_stats = host_stats::collect(state.data_dir()).await?;
+    Ok(Json(host_stats))
 }
 
 /// Gates every `/apps/{name}/...` route on the requesting user's per-app
