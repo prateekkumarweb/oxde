@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
 import { Sparkline } from "@/components/sparkline";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
 import { useHostStats } from "@/lib/queries";
 import { useTimeSeries } from "@/lib/use-time-series";

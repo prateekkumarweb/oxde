@@ -1,12 +1,14 @@
 import { useId } from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+
+import type { TimeSeriesPoint } from "@/lib/use-time-series";
+
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import type { TimeSeriesPoint } from "@/lib/use-time-series";
 
 const chartConfig = {
   v: { label: "Value", color: "var(--primary)" },

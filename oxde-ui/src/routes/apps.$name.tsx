@@ -1,12 +1,15 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+import type { AppPermission, EnvVar, RunImage } from "@/lib/types";
+
 import { DeploymentLogs } from "@/components/deployment-logs";
 import { DeploymentStats } from "@/components/deployment-stats";
 import { EnvVarEditor } from "@/components/env-var-editor";
 import { PermissionsEditor } from "@/components/permissions-editor";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -15,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ApiError, useAuth } from "@/lib/auth";
 import {
   useActivateDeployment,
   useApp,
@@ -26,8 +30,6 @@ import {
   useUpdateAppPermissions,
   useUploadDeployment,
 } from "@/lib/queries";
-import { ApiError, useAuth } from "@/lib/auth";
-import type { AppPermission, EnvVar, RunImage } from "@/lib/types";
 
 export const Route = createFileRoute("/apps/$name")({
   component: AppDetail,

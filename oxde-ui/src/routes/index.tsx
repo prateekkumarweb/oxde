@@ -1,11 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+
+import { CreateAppForm } from "@/components/create-app-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CreateAppForm } from "@/components/create-app-form";
-import { useApps } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
+import { useApps } from "@/lib/queries";
 
 export const Route = createFileRoute("/")({
   component: AppsList,

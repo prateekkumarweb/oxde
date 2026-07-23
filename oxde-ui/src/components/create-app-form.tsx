@@ -1,4 +1,8 @@
 import { useState, type FormEvent } from "react";
+
+import type { AppSource, EnvVar, GitDeployMode, RunImage } from "@/lib/types";
+
+import { EnvVarEditor } from "@/components/env-var-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,10 +14,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCreateApp } from "@/lib/queries";
 import { ApiError } from "@/lib/auth";
-import { EnvVarEditor } from "@/components/env-var-editor";
-import type { AppSource, EnvVar, GitDeployMode, RunImage } from "@/lib/types";
+import { useCreateApp } from "@/lib/queries";
 import { isOneOf } from "@/lib/utils";
 
 type GitMode = GitDeployMode["type"];

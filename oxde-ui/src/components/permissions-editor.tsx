@@ -1,3 +1,5 @@
+import type { AppPermission, PermissionLevel } from "@/lib/types";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { AppPermission, PermissionLevel } from "@/lib/types";
 
 const PERMISSION_LEVEL_LABELS: Record<PermissionLevel, string> = { read: "Read", write: "Write" };
 

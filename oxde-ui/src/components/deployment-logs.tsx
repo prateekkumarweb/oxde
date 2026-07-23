@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+
+import type { AppSource, LogKind } from "@/lib/types";
+
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/lib/api";
 import { ApiError } from "@/lib/auth";
-import type { AppSource, LogKind } from "@/lib/types";
 
 const PHASE_LABELS: Record<LogKind, string> = {
   clone: "Clone",

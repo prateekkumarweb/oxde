@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Check, Copy } from "lucide-react";
 import { useState, type FormEvent } from "react";
+
+import type { ApiTokenView } from "@/lib/types";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +16,6 @@ import {
   useCreateApiToken,
   useRevokeApiToken,
 } from "@/lib/queries";
-import type { ApiTokenView } from "@/lib/types";
 
 export const Route = createFileRoute("/settings")({
   component: SettingsPage,

@@ -1,6 +1,7 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { Moon, Sun } from "lucide-react";
+
 import { LoginScreen } from "@/components/login-screen";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";

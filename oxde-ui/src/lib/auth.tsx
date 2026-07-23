@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+
 import type { UserView } from "@/lib/generated/UserView";
 
 export class ApiError extends Error {

@@ -1,6 +1,8 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useApi } from "@/lib/api";
+
 import type { AppPermission, AppSource, EnvVar } from "@/lib/types";
+
+import { useApi } from "@/lib/api";
 
 type Api = ReturnType<typeof useApi>;
 

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useAuth } from "@/lib/auth";
+
 import type {
   ApiTokenView,
   AppPermission,
@@ -14,6 +14,8 @@ import type {
   RunConfig,
   UserView,
 } from "@/lib/types";
+
+import { useAuth } from "@/lib/auth";
 
 interface CreateAppInput {
   name: string;
