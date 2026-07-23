@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const MAX_POINTS = 150;
+const MAX_POINTS = 450;
 
 export interface TimeSeriesPoint {
   t: number;

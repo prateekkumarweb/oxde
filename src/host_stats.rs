@@ -6,10 +6,11 @@ use ts_rs::TS;
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Serialize, Clone, Copy, TS)]
+#[derive(Serialize, Clone, TS)]
 #[ts(export)]
 pub struct HostStats {
     pub cpu_percent: f32,
+    pub cpu_per_core_percent: Vec<f32>,
     pub memory_usage_bytes: u64,
     pub memory_total_bytes: u64,
     pub disk_usage_bytes: u64,
@@ -33,9 +34,11 @@ fn collect_blocking(data_dir: &Path) -> HostStats {
     sys.refresh_memory();
 
     let (disk_usage_bytes, disk_total_bytes) = disk_usage(data_dir);
+    let cpu_per_core_percent = sys.cpus().iter().map(sysinfo::Cpu::cpu_usage).collect();
 
     HostStats {
         cpu_percent: sys.global_cpu_usage(),
+        cpu_per_core_percent,
         memory_usage_bytes: sys.used_memory(),
         memory_total_bytes: sys.total_memory(),
         disk_usage_bytes,

@@ -9,6 +9,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { cn } from "@/lib/utils";
 
 const chartConfig = {
   v: { label: "Value", color: "var(--primary)" },
@@ -37,15 +38,19 @@ function formatTooltipValue(
 export function Sparkline({
   points,
   valueLabel,
+  heightClassName = "h-14",
 }: {
   points: TimeSeriesPoint[];
   valueLabel: (v: number) => string;
+  heightClassName?: string;
 }) {
   const gradientId = useId();
 
   if (points.length === 0) {
     return (
-      <div className="flex h-14 items-center text-xs text-muted-foreground">Collecting data…</div>
+      <div className={cn("flex items-center text-xs text-muted-foreground", heightClassName)}>
+        Collecting data…
+      </div>
     );
   }
 
@@ -54,7 +59,7 @@ export function Sparkline({
   const data = points.length === 1 ? [points[0], points[0]] : points;
 
   return (
-    <ChartContainer config={chartConfig} className="aspect-auto h-14 w-full">
+    <ChartContainer config={chartConfig} className={cn("aspect-auto w-full", heightClassName)}>
       <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
