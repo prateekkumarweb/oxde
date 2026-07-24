@@ -40,13 +40,18 @@ interface CreateApiTokenInput {
   expires_at: number;
 }
 
+interface UpdateAppInput {
+  name?: string;
+  env_vars?: EnvVar[];
+}
+
 interface Api {
   listApps: () => Promise<AppView[]>;
   createApp: (input: CreateAppInput) => Promise<AppView>;
-  getApp: (name: string) => Promise<AppView>;
-  deleteApp: (name: string) => Promise<void>;
-  updateAppEnvVars: (name: string, envVars: EnvVar[]) => Promise<AppView>;
-  updateAppPermissions: (name: string, permissions: AppPermission[]) => Promise<AppView>;
+  getApp: (id: string) => Promise<AppView>;
+  deleteApp: (id: string) => Promise<void>;
+  updateApp: (id: string, input: UpdateAppInput) => Promise<AppView>;
+  updateAppPermissions: (id: string, permissions: AppPermission[]) => Promise<AppView>;
   listUsers: () => Promise<UserView[]>;
   createUser: (input: CreateUserInput) => Promise<UserView>;
   updateUser: (username: string, input: UpdateUserInput) => Promise<UserView>;
@@ -55,17 +60,17 @@ interface Api {
   listApiTokens: () => Promise<ApiTokenView[]>;
   createApiToken: (input: CreateApiTokenInput) => Promise<CreateApiTokenResponse>;
   revokeApiToken: (id: number) => Promise<void>;
-  listDeployments: (appName: string) => Promise<DeploymentView[]>;
-  uploadDeployment: (appName: string, file: File) => Promise<DeploymentView>;
-  deployFromGit: (appName: string) => Promise<DeploymentView>;
-  activateDeployment: (appName: string, id: string) => Promise<void>;
-  deleteDeployment: (appName: string, id: string) => Promise<void>;
+  listDeployments: (appId: string) => Promise<DeploymentView[]>;
+  uploadDeployment: (appId: string, file: File) => Promise<DeploymentView>;
+  deployFromGit: (appId: string) => Promise<DeploymentView>;
+  activateDeployment: (appId: string, id: string) => Promise<void>;
+  deleteDeployment: (appId: string, id: string) => Promise<void>;
   streamLogs: (
-    appName: string,
+    appId: string,
     id: string,
     options: { phase: LogKind; follow: boolean; signal?: AbortSignal },
   ) => Promise<Response>;
-  getDeploymentStats: (appName: string, id: string) => Promise<ContainerStats | null>;
+  getDeploymentStats: (appId: string, id: string) => Promise<ContainerStats | null>;
   getHostStats: () => Promise<HostStats>;
 }
 
@@ -83,19 +88,19 @@ export function useApi(): Api {
           body: JSON.stringify(input),
         }),
 
-      getApp: (name) => request(`/apps/${encodeURIComponent(name)}`),
+      getApp: (id) => request(`/apps/${encodeURIComponent(id)}`),
 
-      deleteApp: (name) => request(`/apps/${encodeURIComponent(name)}`, { method: "DELETE" }),
+      deleteApp: (id) => request(`/apps/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-      updateAppEnvVars: (name, envVars) =>
-        request(`/apps/${encodeURIComponent(name)}`, {
+      updateApp: (id, input) =>
+        request(`/apps/${encodeURIComponent(id)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ env_vars: envVars }),
+          body: JSON.stringify(input),
         }),
 
-      updateAppPermissions: (name, permissions) =>
-        request(`/apps/${encodeURIComponent(name)}/permissions`, {
+      updateAppPermissions: (id, permissions) =>
+        request(`/apps/${encodeURIComponent(id)}/permissions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ permissions }),
@@ -141,41 +146,41 @@ export function useApi(): Api {
 
       revokeApiToken: (id) => request(`/users/me/tokens/${id}`, { method: "DELETE" }),
 
-      listDeployments: (appName) => request(`/apps/${encodeURIComponent(appName)}/deployments`),
+      listDeployments: (appId) => request(`/apps/${encodeURIComponent(appId)}/deployments`),
 
-      uploadDeployment: (appName, file) => {
+      uploadDeployment: (appId, file) => {
         const formData = new FormData();
         formData.append("file", file);
-        return request(`/apps/${encodeURIComponent(appName)}/deployments`, {
+        return request(`/apps/${encodeURIComponent(appId)}/deployments`, {
           method: "POST",
           body: formData,
         });
       },
 
-      deployFromGit: (appName) =>
-        request(`/apps/${encodeURIComponent(appName)}/deployments/git`, { method: "POST" }),
+      deployFromGit: (appId) =>
+        request(`/apps/${encodeURIComponent(appId)}/deployments/git`, { method: "POST" }),
 
-      activateDeployment: (appName, id) =>
+      activateDeployment: (appId, id) =>
         request(
-          `/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/activate`,
+          `/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}/activate`,
           {
             method: "POST",
           },
         ),
 
-      deleteDeployment: (appName, id) =>
-        request(`/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}`, {
+      deleteDeployment: (appId, id) =>
+        request(`/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}`, {
           method: "DELETE",
         }),
 
-      streamLogs: (appName, id, { phase, follow, signal }) =>
+      streamLogs: (appId, id, { phase, follow, signal }) =>
         requestStream(
-          `/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/logs?phase=${phase}&follow=${follow}`,
+          `/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}/logs?phase=${phase}&follow=${follow}`,
           { signal },
         ),
 
-      getDeploymentStats: (appName, id) =>
-        request(`/apps/${encodeURIComponent(appName)}/deployments/${encodeURIComponent(id)}/stats`),
+      getDeploymentStats: (appId, id) =>
+        request(`/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}/stats`),
 
       getHostStats: () => request("/host/stats"),
     }),

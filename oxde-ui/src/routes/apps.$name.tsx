@@ -22,10 +22,13 @@ import { ApiError, useAuth } from "@/lib/auth";
 import {
   useActivateDeployment,
   useApp,
+  useAppIdByName,
+  useApps,
   useDeleteApp,
   useDeleteDeployment,
   useDeployFromGit,
   useDeployments,
+  useRenameApp,
   useUpdateAppEnvVars,
   useUpdateAppPermissions,
   useUploadDeployment,
@@ -57,21 +60,28 @@ function AppDetail() {
   const { name } = Route.useParams();
   const navigate = useNavigate();
 
-  const { data: app, error: appError } = useApp(name);
-  const { data: deployments } = useDeployments(name);
-  const deleteApp = useDeleteApp(name);
-  const deployFromGit = useDeployFromGit(name);
-  const uploadDeployment = useUploadDeployment(name);
-  const activateDeployment = useActivateDeployment(name);
-  const deleteDeployment = useDeleteDeployment(name);
-  const updateAppEnvVars = useUpdateAppEnvVars(name);
-  const updateAppPermissions = useUpdateAppPermissions(name);
+  const appId = useAppIdByName(name);
+  const { data: apps } = useApps();
+  const notFound = apps !== undefined && appId === undefined;
+
+  const { data: app, error: appError } = useApp(appId);
+  const { data: deployments } = useDeployments(appId);
+  const deleteApp = useDeleteApp(appId ?? "");
+  const deployFromGit = useDeployFromGit(appId ?? "");
+  const uploadDeployment = useUploadDeployment(appId ?? "");
+  const activateDeployment = useActivateDeployment(appId ?? "");
+  const deleteDeployment = useDeleteDeployment(appId ?? "");
+  const updateAppEnvVars = useUpdateAppEnvVars(appId ?? "");
+  const updateAppPermissions = useUpdateAppPermissions(appId ?? "");
+  const renameApp = useRenameApp(appId ?? "");
   const { user } = useAuth();
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [localEnvVars, setLocalEnvVars] = useState<EnvVar[] | null>(null);
   const [localPermissions, setLocalPermissions] = useState<AppPermission[] | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const busy =
@@ -141,10 +151,35 @@ function AppDetail() {
     });
   }
 
+  async function handleStartRename() {
+    if (!app) {
+      return;
+    }
+    setRenameValue(app.name);
+    setRenaming(true);
+  }
+
+  async function handleSubmitRename(event: React.FormEvent) {
+    event.preventDefault();
+    const trimmed = renameValue.trim();
+    if (trimmed === "" || trimmed === app?.name) {
+      setRenaming(false);
+      return;
+    }
+    await runAction(async () => {
+      const renamed = await renameApp.mutateAsync(trimmed);
+      setRenaming(false);
+      await navigate({ to: "/apps/$name", params: { name: renamed.name } });
+    });
+  }
+
   const error =
     actionError ??
     (appError instanceof ApiError ? appError.message : appError && "Failed to load app");
 
+  if (notFound) {
+    return <p className="text-sm text-destructive">App "{name}" not found.</p>;
+  }
   if (error && !app) {
     return <p className="text-sm text-destructive">{error}</p>;
   }
@@ -153,7 +188,7 @@ function AppDetail() {
   }
 
   const backendPort = import.meta.env.DEV ? "3000" : window.location.port;
-  const appHost = `${name}.${window.location.hostname}${backendPort ? `:${backendPort}` : ""}`;
+  const appHost = `${app.name}.${window.location.hostname}${backendPort ? `:${backendPort}` : ""}`;
   const gitSource = app.source.type === "git" ? app.source : null;
   const runConfig = gitSource?.mode.type === "run" ? gitSource.mode : null;
   const buildConfig = gitSource?.mode.type === "build" ? gitSource.mode : null;
@@ -167,7 +202,35 @@ function AppDetail() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="font-heading text-2xl font-semibold">{name}</h1>
+          {renaming ? (
+            <form onSubmit={handleSubmitRename} className="flex items-center gap-2">
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(event) => setRenameValue(event.target.value)}
+                className="rounded border bg-background px-2 py-1 font-heading text-2xl font-semibold"
+              />
+              <Button type="submit" size="sm" disabled={renameApp.isPending}>
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setRenaming(false)}
+                disabled={renameApp.isPending}
+              >
+                Cancel
+              </Button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h1 className="font-heading text-2xl font-semibold">{app.name}</h1>
+              <Button variant="ghost" size="sm" onClick={handleStartRename}>
+                Rename
+              </Button>
+            </div>
+          )}
           <a
             href={`http://${appHost}/`}
             target="_blank"
@@ -346,7 +409,7 @@ function AppDetail() {
                             {deployment.container_status ?? "not started"}
                           </Badge>
                           {deployment.container_status === "running" && (
-                            <DeploymentStats appName={name} deploymentId={deployment.id} />
+                            <DeploymentStats appId={app.id} deploymentId={deployment.id} />
                           )}
                         </div>
                       </TableCell>
@@ -424,7 +487,7 @@ function AppDetail() {
                     <TableRow>
                       <TableCell colSpan={runConfig ? 7 : 6}>
                         <DeploymentLogs
-                          appName={name}
+                          appId={app.id}
                           deploymentId={deployment.id}
                           source={app.source}
                           onClose={() => setLogsFor(null)}

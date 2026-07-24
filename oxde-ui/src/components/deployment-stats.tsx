@@ -4,14 +4,8 @@ function formatMb(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))}MB`;
 }
 
-export function DeploymentStats({
-  appName,
-  deploymentId,
-}: {
-  appName: string;
-  deploymentId: string;
-}) {
-  const { data: stats } = useDeploymentStats(appName, deploymentId);
+export function DeploymentStats({ appId, deploymentId }: { appId: string; deploymentId: string }) {
+  const { data: stats } = useDeploymentStats(appId, deploymentId);
 
   if (!stats) {
     return null;

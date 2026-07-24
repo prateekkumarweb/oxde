@@ -7,10 +7,10 @@ import { useApi } from "@/lib/api";
 type Api = ReturnType<typeof useApi>;
 
 const appsKey = () => ["apps"] as const;
-const appKey = (name: string) => ["apps", name] as const;
-const deploymentsKey = (name: string) => ["apps", name, "deployments"] as const;
-const deploymentStatsKey = (name: string, id: string) =>
-  ["apps", name, "deployments", id, "stats"] as const;
+const appKey = (id: string) => ["apps", id] as const;
+const deploymentsKey = (id: string) => ["apps", id, "deployments"] as const;
+const deploymentStatsKey = (id: string, deploymentId: string) =>
+  ["apps", id, "deployments", deploymentId, "stats"] as const;
 const usersKey = () => ["users"] as const;
 const apiTokensKey = () => ["apiTokens"] as const;
 const hostStatsKey = () => ["host", "stats"] as const;
@@ -23,37 +23,50 @@ export function useApps() {
   return useQuery(appsOptions(useApi()));
 }
 
-function appOptions(api: Api, name: string) {
-  return queryOptions({ queryKey: appKey(name), queryFn: () => api.getApp(name) });
+/** Resolves an app's `id` from the already-cached apps list by `name` -
+ * the dashboard's URLs stay name-keyed while the API is id-keyed, so every
+ * detail-page hook needs this instead of a name-keyed API call. */
+export function useAppIdByName(name: string): string | undefined {
+  const { data: apps } = useApps();
+  return apps?.find((app) => app.name === name)?.id;
 }
 
-export function useApp(name: string) {
-  return useQuery(appOptions(useApi(), name));
-}
-
-function deploymentsOptions(api: Api, name: string) {
+function appOptions(api: Api, id: string) {
   return queryOptions({
-    queryKey: deploymentsKey(name),
-    queryFn: () => api.listDeployments(name),
+    queryKey: appKey(id),
+    queryFn: () => api.getApp(id),
+    enabled: id !== "",
+  });
+}
+
+export function useApp(id: string | undefined) {
+  return useQuery(appOptions(useApi(), id ?? ""));
+}
+
+function deploymentsOptions(api: Api, id: string) {
+  return queryOptions({
+    queryKey: deploymentsKey(id),
+    queryFn: () => api.listDeployments(id),
+    enabled: id !== "",
     refetchInterval: (query) =>
       query.state.data?.some((deployment) => deployment.status.state === "pending") ? 2000 : false,
   });
 }
 
-export function useDeployments(name: string) {
-  return useQuery(deploymentsOptions(useApi(), name));
+export function useDeployments(id: string | undefined) {
+  return useQuery(deploymentsOptions(useApi(), id ?? ""));
 }
 
-function deploymentStatsOptions(api: Api, name: string, deploymentId: string) {
+function deploymentStatsOptions(api: Api, id: string, deploymentId: string) {
   return queryOptions({
-    queryKey: deploymentStatsKey(name, deploymentId),
-    queryFn: () => api.getDeploymentStats(name, deploymentId),
+    queryKey: deploymentStatsKey(id, deploymentId),
+    queryFn: () => api.getDeploymentStats(id, deploymentId),
     refetchInterval: 5000,
   });
 }
 
-export function useDeploymentStats(name: string, deploymentId: string) {
-  return useQuery(deploymentStatsOptions(useApi(), name, deploymentId));
+export function useDeploymentStats(id: string, deploymentId: string) {
+  return useQuery(deploymentStatsOptions(useApi(), id, deploymentId));
 }
 
 function hostStatsOptions(api: Api) {
@@ -78,21 +91,35 @@ export function useCreateApp() {
   });
 }
 
-export function useUpdateAppEnvVars(name: string) {
+export function useUpdateAppEnvVars(id: string) {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (envVars: EnvVar[]) => api.updateAppEnvVars(name, envVars),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(name) }),
+    mutationFn: (envVars: EnvVar[]) => api.updateApp(id, { env_vars: envVars }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(id) }),
   });
 }
 
-export function useUpdateAppPermissions(name: string) {
+/** Renaming also affects the apps list (subdomain/dashboard URL derive from
+ * `name`) and the app's own detail query, so both get invalidated. */
+export function useRenameApp(id: string) {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (permissions: AppPermission[]) => api.updateAppPermissions(name, permissions),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(name) }),
+    mutationFn: (name: string) => api.updateApp(id, { name }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: appsKey() });
+      void queryClient.invalidateQueries({ queryKey: appKey(id) });
+    },
+  });
+}
+
+export function useUpdateAppPermissions(id: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (permissions: AppPermission[]) => api.updateAppPermissions(id, permissions),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(id) }),
   });
 }
 
@@ -172,56 +199,56 @@ export function useChangeOwnPassword() {
   });
 }
 
-export function useDeleteApp(name: string) {
+export function useDeleteApp(id: string) {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.deleteApp(name),
+    mutationFn: () => api.deleteApp(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appsKey() }),
   });
 }
 
 /** Invalidates the app + its deployments after any deployment-mutating action. */
-function useInvalidateDeployments(name: string) {
+function useInvalidateDeployments(id: string) {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.invalidateQueries({ queryKey: appKey(name) });
-    void queryClient.invalidateQueries({ queryKey: deploymentsKey(name) });
+    void queryClient.invalidateQueries({ queryKey: appKey(id) });
+    void queryClient.invalidateQueries({ queryKey: deploymentsKey(id) });
   };
 }
 
-export function useUploadDeployment(name: string) {
+export function useUploadDeployment(id: string) {
   const api = useApi();
-  const invalidate = useInvalidateDeployments(name);
+  const invalidate = useInvalidateDeployments(id);
   return useMutation({
-    mutationFn: (file: File) => api.uploadDeployment(name, file),
+    mutationFn: (file: File) => api.uploadDeployment(id, file),
     onSuccess: invalidate,
   });
 }
 
-export function useDeployFromGit(name: string) {
+export function useDeployFromGit(id: string) {
   const api = useApi();
-  const invalidate = useInvalidateDeployments(name);
+  const invalidate = useInvalidateDeployments(id);
   return useMutation({
-    mutationFn: () => api.deployFromGit(name),
+    mutationFn: () => api.deployFromGit(id),
     onSuccess: invalidate,
   });
 }
 
-export function useActivateDeployment(name: string) {
+export function useActivateDeployment(id: string) {
   const api = useApi();
-  const invalidate = useInvalidateDeployments(name);
+  const invalidate = useInvalidateDeployments(id);
   return useMutation({
-    mutationFn: (deploymentId: string) => api.activateDeployment(name, deploymentId),
+    mutationFn: (deploymentId: string) => api.activateDeployment(id, deploymentId),
     onSuccess: invalidate,
   });
 }
 
-export function useDeleteDeployment(name: string) {
+export function useDeleteDeployment(id: string) {
   const api = useApi();
-  const invalidate = useInvalidateDeployments(name);
+  const invalidate = useInvalidateDeployments(id);
   return useMutation({
-    mutationFn: (deploymentId: string) => api.deleteDeployment(name, deploymentId),
+    mutationFn: (deploymentId: string) => api.deleteDeployment(id, deploymentId),
     onSuccess: invalidate,
   });
 }

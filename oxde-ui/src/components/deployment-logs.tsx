@@ -32,13 +32,13 @@ function relevantPhases(source: AppSource): LogKind[] {
 }
 
 interface DeploymentLogsProps {
-  appName: string;
+  appId: string;
   deploymentId: string;
   source: AppSource;
   onClose: () => void;
 }
 
-export function DeploymentLogs({ appName, deploymentId, source, onClose }: DeploymentLogsProps) {
+export function DeploymentLogs({ appId, deploymentId, source, onClose }: DeploymentLogsProps) {
   const phases = relevantPhases(source);
   const defaultPhase = phases[phases.length - 1];
 
@@ -60,7 +60,7 @@ export function DeploymentLogs({ appName, deploymentId, source, onClose }: Deplo
         </TabsList>
         {phases.map((phase) => (
           <TabsContent key={phase} value={phase}>
-            <DeploymentLogPane appName={appName} deploymentId={deploymentId} phase={phase} />
+            <DeploymentLogPane appId={appId} deploymentId={deploymentId} phase={phase} />
           </TabsContent>
         ))}
       </Tabs>
@@ -69,14 +69,14 @@ export function DeploymentLogs({ appName, deploymentId, source, onClose }: Deplo
 }
 
 interface DeploymentLogPaneProps {
-  appName: string;
+  appId: string;
   deploymentId: string;
   phase: LogKind;
 }
 
 type StreamState = "connecting" | "streaming" | "closed";
 
-function DeploymentLogPane({ appName, deploymentId, phase }: DeploymentLogPaneProps) {
+function DeploymentLogPane({ appId, deploymentId, phase }: DeploymentLogPaneProps) {
   const api = useApi();
   const [following, setFollowing] = useState(false);
   const [lines, setLines] = useState("");
@@ -93,7 +93,7 @@ function DeploymentLogPane({ appName, deploymentId, phase }: DeploymentLogPanePr
       setState("connecting");
 
       try {
-        const response = await api.streamLogs(appName, deploymentId, {
+        const response = await api.streamLogs(appId, deploymentId, {
           phase,
           follow: following,
           signal: controller.signal,
@@ -125,7 +125,7 @@ function DeploymentLogPane({ appName, deploymentId, phase }: DeploymentLogPanePr
 
     void read();
     return () => controller.abort();
-  }, [api, appName, deploymentId, phase, following]);
+  }, [api, appId, deploymentId, phase, following]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });

@@ -164,7 +164,7 @@ async fn fail_pending_deployments(state: &AppState) {
     };
 
     for app in apps {
-        let deployments = match storage::list_deployments(state, &app.name).await {
+        let deployments = match storage::list_deployments(state, &app.id).await {
             Ok(deployments) => deployments,
             Err(err) => {
                 tracing::error!(error = %err, app = app.name, "failed to list deployments for pending-deployment reconciliation");
@@ -197,7 +197,7 @@ async fn fail_pending_deployments(state: &AppState) {
 
             if let Err(err) = storage::fail_git_deployment(
                 state,
-                &app.name,
+                &app.id,
                 &deployment.id,
                 "interrupted by server restart",
             )
@@ -244,10 +244,10 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     let Some(run_config) = app.run_config() else {
         return Ok(());
     };
-    let Some(deployment_id) = storage::active_deployment_id(state, &app.name).await else {
+    let Some(deployment_id) = storage::active_deployment_id(state, &app.id).await else {
         return Ok(());
     };
-    let deployment = storage::get_deployment(state, &app.name, &deployment_id).await?;
+    let deployment = storage::get_deployment(state, &app.id, &deployment_id).await?;
     let Some(container_name) = &deployment.container_name else {
         return Ok(());
     };

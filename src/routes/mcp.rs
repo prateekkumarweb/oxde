@@ -23,8 +23,8 @@ use crate::{
 };
 
 #[derive(Deserialize, JsonSchema)]
-struct AppNameParams {
-    app_name: String,
+struct AppIdParams {
+    app_id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -38,7 +38,7 @@ struct CreateAppParams {
 
 #[derive(Deserialize, JsonSchema)]
 struct DeploymentParams {
-    app_name: String,
+    app_id: String,
     deployment_id: String,
 }
 
@@ -90,14 +90,14 @@ impl OxdeMcpServer {
         json_text(&views)
     }
 
-    #[tool(description = "Get one app by name")]
+    #[tool(description = "Get one app by id")]
     async fn get_app(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(params): Parameters<AppNameParams>,
+        Parameters(params): Parameters<AppIdParams>,
     ) -> Result<String, String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
@@ -130,15 +130,15 @@ impl OxdeMcpServer {
     async fn delete_app(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(params): Parameters<AppNameParams>,
+        Parameters(params): Parameters<AppIdParams>,
     ) -> Result<(), String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
-        api::delete_app_with_containers(&self.state, &params.app_name)
+        api::delete_app_with_containers(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())
     }
@@ -147,17 +147,17 @@ impl OxdeMcpServer {
     async fn list_deployments(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(params): Parameters<AppNameParams>,
+        Parameters(params): Parameters<AppIdParams>,
     ) -> Result<String, String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
-        let active_id = storage::active_deployment_id(&self.state, &params.app_name).await;
+        let active_id = storage::active_deployment_id(&self.state, &params.app_id).await;
         let mut views = Vec::new();
-        for deployment in storage::list_deployments(&self.state, &params.app_name)
+        for deployment in storage::list_deployments(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?
         {
@@ -170,15 +170,15 @@ impl OxdeMcpServer {
     async fn deploy_from_git(
         &self,
         Extension(parts): Extension<Parts>,
-        Parameters(params): Parameters<AppNameParams>,
+        Parameters(params): Parameters<AppIdParams>,
     ) -> Result<String, String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
-        let deployment = api::start_git_deployment(&self.state, &params.app_name)
+        let deployment = api::start_git_deployment(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         json_text(&deployment)
@@ -191,12 +191,12 @@ impl OxdeMcpServer {
         Parameters(params): Parameters<DeploymentParams>,
     ) -> Result<(), String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
-        api::activate_with_containers(&self.state, &params.app_name, &params.deployment_id)
+        api::activate_with_containers(&self.state, &params.app_id, &params.deployment_id)
             .await
             .map_err(|e| e.to_string())
     }
@@ -208,12 +208,12 @@ impl OxdeMcpServer {
         Parameters(params): Parameters<DeploymentParams>,
     ) -> Result<(), String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
-        api::delete_deployment_with_containers(&self.state, &params.app_name, &params.deployment_id)
+        api::delete_deployment_with_containers(&self.state, &params.app_id, &params.deployment_id)
             .await
             .map_err(|e| e.to_string())
     }
@@ -225,12 +225,12 @@ impl OxdeMcpServer {
         Parameters(params): Parameters<DeploymentParams>,
     ) -> Result<String, String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
-        storage::get_deployment(&self.state, &params.app_name, &params.deployment_id)
+        storage::get_deployment(&self.state, &params.app_id, &params.deployment_id)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -251,13 +251,13 @@ impl OxdeMcpServer {
         Parameters(params): Parameters<DeploymentParams>,
     ) -> Result<String, String> {
         let current_user = current_user_from(&parts)?;
-        let app = storage::get_app(&self.state, &params.app_name)
+        let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
         authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
         let deployment =
-            storage::get_deployment(&self.state, &params.app_name, &params.deployment_id)
+            storage::get_deployment(&self.state, &params.app_id, &params.deployment_id)
                 .await
                 .map_err(|e| e.to_string())?;
         let Some(container_name) = deployment.container_name else {
