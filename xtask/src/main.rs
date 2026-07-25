@@ -82,6 +82,16 @@ async fn run_migration_cli(args: Vec<String>) -> anyhow::Result<()> {
 }
 
 fn gen_types() -> bool {
+    // `dashboard_assets.rs`'s `RustEmbed` derive needs `oxde-ui/dist` to
+    // exist at compile time, but compiling this test target is how a fresh
+    // checkout builds it for the first time - create an empty placeholder
+    // so that compile can succeed before `build_ui` populates it for real.
+    let dist_dir = Path::new("oxde-ui/dist");
+    if !dist_dir.exists() && std::fs::create_dir_all(dist_dir).is_err() {
+        eprintln!("failed to create {}", dist_dir.display());
+        return false;
+    }
+
     run("cargo", &["test", "--quiet", "export_bindings"], &[], None)
 }
 

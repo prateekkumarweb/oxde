@@ -20,7 +20,7 @@
     "lucide-react": "^1.26.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "recharts": "3.8.0",
+    "recharts": "^3.8.0",
     "shadcn": "^4.14.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
@@ -43,7 +43,7 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "11.14.0",
+      "version": "11.17.0",
       "onFail": "download"
     }
   }
