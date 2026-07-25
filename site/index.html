@@ -6,7 +6,7 @@
     <title>OxDe - Self-hosted deployment platform</title>
     <meta
       name="description"
-      content="OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, designed to run comfortably on modest hardware. Currently in early development."
+      content="OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, small enough to run on a Raspberry Pi. Currently in early development."
     />
     <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -502,12 +502,11 @@
         <div>
           <p class="eyebrow">Self-hosted deployment platform</p>
           <h1>
-            Your infrastructure.<br />Your <span class="accent">deploys.</span>
+            Run your <span class="accent">own</span><br />deploy platform.
           </h1>
           <p class="lede">
-            OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify,
-            designed to stay light on resources, from a spare server to modest
-            hardware.
+            A self-hostable alternative to Vercel, Netlify, and Coolify,
+            small enough to run on a Raspberry Pi.
           </p>
           <div class="cta-row">
             <a
@@ -567,13 +566,13 @@
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Git deploys</h3>
-              <p>Point OxDe at a repository and it takes care of the rest.</p>
+              <p>Shallow clone straight from a repo URL and branch, no CI runner in between.</p>
             </div>
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Zip upload</h3>
               <p>
-                No repo yet? Upload a build folder straight from the dashboard.
+                Drag a build folder into the dashboard when there's no repo to point at.
               </p>
             </div>
             <div class="card">
@@ -587,77 +586,80 @@
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Subdomain routing</h3>
-              <p>Every app gets its own subdomain and its own origin.</p>
+              <p>Each app gets its own origin, isolated from every other app on the instance.</p>
             </div>
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Dashboard &amp; API</h3>
               <p>
-                Manage every app and deployment from the dashboard, or script it
-                against the JSON API.
+                Everything the dashboard does is a call to the same JSON API you
+                can script against.
               </p>
             </div>
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Build step</h3>
               <p>
-                Run your build command before deploy, instead of shipping
-                pre-built output.
+                Set a build command and OxDe runs it in a container before
+                serving the output.
               </p>
             </div>
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Multi-user auth</h3>
               <p>
-                Sessions and per-app permissions, so a team can share one
-                instance safely.
+                Sessions plus per-app read/write permissions for sharing one
+                instance across a team.
               </p>
             </div>
             <div class="card">
               <div class="tag ok">Shipped</div>
               <h3>Per-app environment variables</h3>
-              <p>Configure each app's env vars from the dashboard or API.</p>
+              <p>Set and edit each app's env vars from the dashboard or API.</p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>Auto deploy</h3>
-              <p>Push to your repo and OxDe picks it up on its own.</p>
+              <p>A push to the tracked branch triggers a redeploy automatically.</p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>Multi-host</h3>
               <p>
-                Spread apps across more than one machine from a single
-                dashboard.
+                A daemon per machine, one dashboard, apps spread across more
+                than one host.
               </p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>Custom domains &amp; TLS</h3>
               <p>
-                Bring your own domain per app, with automatic HTTPS via ACME.
+                Point a domain at an app and get HTTPS via ACME, no separate
+                proxy config.
               </p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>Teams &amp; multi-tenancy</h3>
               <p>
-                Isolated groups sharing one instance, each owning their own
-                apps.
+                Separate groups on one instance, each with its own apps and
+                members.
               </p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>MCP integration</h3>
               <p>
-                Expose deploy and app-management actions to AI agents over MCP.
+                Let an AI agent deploy and manage apps over MCP instead of the
+                dashboard.
               </p>
             </div>
             <div class="card">
               <div class="tag dev">Roadmap</div>
               <h3>CLI tool</h3>
               <p>
-                Deploy and manage apps from the terminal, no dashboard needed.
+                Deploy and manage apps from a terminal command, no browser
+                required.
               </p>
             </div>
           </div>
@@ -669,7 +671,7 @@
           <p class="eyebrow" style="justify-content: center">
             Own your infrastructure
           </p>
-          <h2>Your hardware. Your deploys.</h2>
+          <h2>MIT licensed. Clone it and run it.</h2>
           <p>
             OxDe is open source under the MIT license. Clone it, build it, and
             run your own deployment platform today.

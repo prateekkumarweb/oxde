@@ -1,17 +1,17 @@
 # OxDe
 
-**Your infrastructure. Your deploys.**
+**Run your own deploy platform.**
 
-OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, written in Rust and designed to stay light on resources, from a spare server to a Raspberry Pi. It gives you app/deployment management via a dashboard and JSON API, subdomain-based routing, zip-upload and git-based deploys (including a build step), and long-lived app processes run in rootless Podman containers.
+OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, written in Rust, small enough to run on a Raspberry Pi. It gives you app/deployment management via a dashboard and JSON API, subdomain-based routing, zip-upload and git-based deploys (including a build step), and long-lived app processes run in rootless Podman containers.
 
 ## Features
 
-- **Git deploys**: point OxDe at a repository and it takes care of the rest.
-- **Zip upload**: no repo yet? Upload a build folder straight from the dashboard.
+- **Git deploys**: shallow clone straight from a repo URL and branch, no CI runner in between.
+- **Zip upload**: drag a build folder into the dashboard when there's no repo to point at.
 - **Run real apps**: not just static files, long-running processes run in their own containers.
-- **Subdomain routing**: every app gets its own subdomain and its own origin.
-- **Build step**: run a build command before deploy, instead of shipping pre-built output.
-- **Dashboard & API**: manage every app and deployment from the dashboard, or script it against the JSON API.
+- **Subdomain routing**: each app gets its own origin, isolated from every other app on the instance.
+- **Build step**: set a build command and OxDe runs it in a container before serving the output.
+- **Dashboard & API**: everything the dashboard does is a call to the same JSON API you can script against.
 
 ## Requirements
 
