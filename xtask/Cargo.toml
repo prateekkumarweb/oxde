@@ -6,7 +6,7 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-anyhow = "1.0.104"
-oxde-db = { version = "0.0.0", path = "../oxde-db" }
-toasty-cli = "0.9.0"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+anyhow.workspace = true
+oxde-db.workspace = true
+toasty-cli.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

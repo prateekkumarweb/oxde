@@ -62,13 +62,13 @@ export default defineConfig({
       "@tanstack/query/prefer-query-options": "error",
       "react/react-in-jsx-scope": "off",
 
-      // Correctness — catch real bugs
+      // Correctness - catch real bugs
       "tailwindcss/no-conflicting-classes": "error",
       "tailwindcss/no-deprecated-classes": "error",
       "tailwindcss/no-duplicate-classes": "warn",
       "tailwindcss/no-unknown-classes": "error",
 
-      // Modernization — keep classes in current canonical form
+      // Modernization - keep classes in current canonical form
       "tailwindcss/enforce-canonical": "warn",
       "tailwindcss/no-unnecessary-arbitrary-value": "warn",
 

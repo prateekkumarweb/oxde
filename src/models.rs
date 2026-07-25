@@ -22,6 +22,26 @@ pub struct App {
     pub permissions: Vec<AppPermission>,
 }
 
+impl App {
+    /// Whether `username` (a `Member`, not `Admin` - callers check that
+    /// separately) has at least `required` access to this app.
+    pub fn has_permission(&self, username: &str, required: PermissionLevel) -> bool {
+        self.permissions
+            .iter()
+            .any(|grant| grant.username == username && grant.level.satisfies(required))
+    }
+
+    pub const fn run_config(&self) -> Option<&RunConfig> {
+        match &self.source {
+            AppSource::Git(git_source) => match &git_source.mode {
+                GitDeployMode::Run(run) => Some(run),
+                GitDeployMode::Static { .. } | GitDeployMode::Build(_) => None,
+            },
+            AppSource::Upload => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppPermission {
@@ -54,26 +74,6 @@ impl PermissionLevel {
 pub struct EnvVar {
     pub key: String,
     pub value: String,
-}
-
-impl App {
-    /// Whether `username` (a `Member`, not `Admin` - callers check that
-    /// separately) has at least `required` access to this app.
-    pub fn has_permission(&self, username: &str, required: PermissionLevel) -> bool {
-        self.permissions
-            .iter()
-            .any(|grant| grant.username == username && grant.level.satisfies(required))
-    }
-
-    pub const fn run_config(&self) -> Option<&RunConfig> {
-        match &self.source {
-            AppSource::Git(git_source) => match &git_source.mode {
-                GitDeployMode::Run(run) => Some(run),
-                GitDeployMode::Static { .. } | GitDeployMode::Build(_) => None,
-            },
-            AppSource::Upload => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]

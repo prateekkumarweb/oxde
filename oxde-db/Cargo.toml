@@ -6,8 +6,8 @@ edition = "2024"
 workspace = true
 
 [dependencies]
-anyhow = "1.0.104"
-toasty = { version = "0.9.0", features = ["turso", "migration"] }
-toasty-core = "0.9.0"
-tracing = "0.1.44"
-uuid = { version = "1.24.0", features = ["v7"] }
+anyhow.workspace = true
+toasty = { workspace = true, features = ["turso", "migration"] }
+toasty-core.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v7"] }

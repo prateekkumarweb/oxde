@@ -22,7 +22,7 @@ Never pin a version directly in a member crate's `Cargo.toml`.
 
 ## Characters
 
-Write documentation and code using only characters found on a US layout keyboard. Avoid special characters such as em dashes, Unicode arrows, or the ellipsis. Use their plain-ASCII equivalents instead:
+Write comments and documentation using only characters found on a US layout keyboard. Avoid special characters such as em dashes, Unicode arrows, or the ellipsis. Use their plain-ASCII equivalents instead. This does not apply to user-facing UI text, where the correct typographic character is fine:
 
 - `-` or `--` instead of an em dash (`—`)
 - `->` instead of a Unicode arrow (`→`)

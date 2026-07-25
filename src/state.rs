@@ -23,39 +23,6 @@ pub struct AppState {
     inner: Arc<Inner>,
 }
 
-struct Inner {
-    data_dir: PathBuf,
-    write_lock: AsyncMutex<()>,
-    id_seq: AtomicU64,
-    max_upload_bytes: u64,
-    max_uncompressed_bytes: u64,
-    base_domain: String,
-    git_fetch_timeout_secs: u64,
-    install_timeout_secs: u64,
-    build_timeout_secs: u64,
-    api_token_max_expiry_days: i64,
-    enable_mcp: bool,
-    docker: Docker,
-    proxy_client: ProxyClient,
-    container_ips: ConcurrentHashMap<String, (String, Instant)>,
-    db: toasty::Db,
-    sessions: ConcurrentHashMap<String, crate::auth::Session>,
-    log_registry: LogRegistry,
-}
-
-/// Scalar config `AppState::new` bundles a plain constructor's worth of
-/// values into a struct rather than exceeding clippy's argument-count lint.
-pub struct AppStateLimits {
-    pub max_upload_bytes: u64,
-    pub max_uncompressed_bytes: u64,
-    pub base_domain: String,
-    pub git_fetch_timeout_secs: u64,
-    pub install_timeout_secs: u64,
-    pub build_timeout_secs: u64,
-    pub api_token_max_expiry_days: i64,
-    pub enable_mcp: bool,
-}
-
 impl AppState {
     pub fn new(
         data_dir: PathBuf,
@@ -204,4 +171,37 @@ impl AppState {
         let seq = self.next_seq();
         self.tmp_dir().join(format!("{prefix}-{ts}-{seq}"))
     }
+}
+
+struct Inner {
+    data_dir: PathBuf,
+    write_lock: AsyncMutex<()>,
+    id_seq: AtomicU64,
+    max_upload_bytes: u64,
+    max_uncompressed_bytes: u64,
+    base_domain: String,
+    git_fetch_timeout_secs: u64,
+    install_timeout_secs: u64,
+    build_timeout_secs: u64,
+    api_token_max_expiry_days: i64,
+    enable_mcp: bool,
+    docker: Docker,
+    proxy_client: ProxyClient,
+    container_ips: ConcurrentHashMap<String, (String, Instant)>,
+    db: toasty::Db,
+    sessions: ConcurrentHashMap<String, crate::auth::Session>,
+    log_registry: LogRegistry,
+}
+
+/// Scalar config `AppState::new` bundles a plain constructor's worth of
+/// values into a struct rather than exceeding clippy's argument-count lint.
+pub struct AppStateLimits {
+    pub max_upload_bytes: u64,
+    pub max_uncompressed_bytes: u64,
+    pub base_domain: String,
+    pub git_fetch_timeout_secs: u64,
+    pub install_timeout_secs: u64,
+    pub build_timeout_secs: u64,
+    pub api_token_max_expiry_days: i64,
+    pub enable_mcp: bool,
 }
