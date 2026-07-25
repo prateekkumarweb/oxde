@@ -303,13 +303,17 @@ mod tests {
             registry,
         };
 
-        let first = Bytes::from(vec![b'a'; RUN_LOG_ROTATE_BYTES as usize]);
+        let first = Bytes::from(vec![
+            b'a';
+            usize::try_from(RUN_LOG_ROTATE_BYTES)
+                .expect("fits in usize")
+        ]);
         let second = Bytes::from_static(b"after-rotation");
         run_pump(target, chunk_stream(vec![first, second])).await;
 
         assert_eq!(
             std::fs::read(dir.join("run.log.1")).unwrap().len(),
-            RUN_LOG_ROTATE_BYTES as usize
+            usize::try_from(RUN_LOG_ROTATE_BYTES).expect("fits in usize")
         );
         assert_eq!(
             std::fs::read(dir.join("run.log")).unwrap(),
