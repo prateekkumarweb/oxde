@@ -288,14 +288,14 @@ async fn run_command_to_completion(
     let result = match wait_result {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(BollardError::DockerContainerWaitError { error, code })) => Err(
-            AppError::ContainerStartFailed(format!("command exited {code}: {error}")),
+            AppError::CommandFailed(format!("command exited {code}: {error}")),
         ),
         Ok(Err(err)) => Err(start_failed(&err)),
         Err(_) => {
             // Stop it explicitly on timeout rather than leaving it running
             // for the whole grace period below.
             docker.stop_container(container_name, None).await.ok();
-            Err(AppError::ContainerStartFailed(format!(
+            Err(AppError::CommandFailed(format!(
                 "command timed out after {}s",
                 exec.timeout.as_secs()
             )))
@@ -631,7 +631,7 @@ mod live_tests {
             None,
         )
         .await;
-        assert!(matches!(result, Err(AppError::ContainerStartFailed(_))));
+        assert!(matches!(result, Err(AppError::CommandFailed(_))));
         assert!(!is_running(&docker, name).await.expect("is_running"));
         std::fs::remove_dir_all(&checkout).ok();
     }

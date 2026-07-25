@@ -24,24 +24,27 @@ pub fn new_client() -> ProxyClient {
     Client::builder(TokioExecutor::new()).build(connector)
 }
 
+/// `Err` means `target_ip` was unreachable; `Ok` wraps whatever response the
+/// target app returned, including a 5xx of its own. Callers use the
+/// distinction to evict a cached IP only when it's actually stale.
 pub async fn proxy(
     client: &ProxyClient,
     target_ip: &str,
     target_port: u16,
     mut request: Request<Body>,
-) -> Response {
+) -> Result<Response, ()> {
     let path_and_query = request.uri().path_and_query().map_or("/", |pq| pq.as_str());
     let Ok(target_uri) = format!("http://{target_ip}:{target_port}{path_and_query}").parse::<Uri>()
     else {
-        return StatusCode::BAD_GATEWAY.into_response();
+        return Ok(StatusCode::BAD_GATEWAY.into_response());
     };
     *request.uri_mut() = target_uri;
 
     match client.request(request).await {
-        Ok(response) => response.map(Body::new),
+        Ok(response) => Ok(response.map(Body::new)),
         Err(err) => {
             tracing::error!(error = %err, target_ip, target_port, "reverse proxy request failed");
-            StatusCode::BAD_GATEWAY.into_response()
+            Err(())
         }
     }
 }
@@ -72,7 +75,9 @@ mod tests {
             .uri("/hello")
             .body(Body::empty())
             .expect("build request");
-        let response = proxy(&client, "127.0.0.1", port, request).await;
+        let response = proxy(&client, "127.0.0.1", port, request)
+            .await
+            .expect("target reachable");
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -97,7 +102,9 @@ mod tests {
             .uri("/big")
             .body(Body::empty())
             .expect("build request");
-        let response = proxy(&client, "127.0.0.1", port, request).await;
+        let response = proxy(&client, "127.0.0.1", port, request)
+            .await
+            .expect("target reachable");
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -106,13 +113,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unreachable_target_is_bad_gateway() {
+    async fn unreachable_target_is_reported_as_unreachable() {
         let client = new_client();
         let request = Request::builder()
             .uri("/")
             .body(Body::empty())
             .expect("build request");
-        let response = proxy(&client, "127.0.0.1", 1, request).await;
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let result = proxy(&client, "127.0.0.1", 1, request).await;
+        assert!(result.is_err());
     }
 }

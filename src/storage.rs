@@ -25,6 +25,27 @@ use crate::{
     state::AppState,
 };
 
+/// Best-effort staging cleanup after a failed deployment - logs rather than
+/// silently swallowing a failure, since a directory this leaves behind is
+/// otherwise invisible until it fills the disk; `sweep_orphaned_dirs` picks
+/// it up on next startup regardless.
+pub fn remove_dir_all_logged(path: &Path) {
+    if let Err(err) = std::fs::remove_dir_all(path)
+        && err.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(error = %err, path = %path.display(), "failed to clean up staging directory");
+    }
+}
+
+/// Async counterpart of [`remove_dir_all_logged`], for a single staged file.
+pub async fn remove_file_logged(path: &Path) {
+    if let Err(err) = tokio::fs::remove_file(path).await
+        && err.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(error = %err, path = %path.display(), "failed to clean up staged upload");
+    }
+}
+
 /// Nothing under `tmp/` is ever referenced from `apps/`, so wiping it on
 /// startup is always safe and finishes any create/delete a crash interrupted.
 pub fn sweep_tmp_dir(state: &AppState) -> std::io::Result<()> {

@@ -78,31 +78,50 @@ async fn serve_run_mode(
     run_config: &RunConfig,
     request: Request<Body>,
 ) -> Response {
-    let ip = match state.cached_container_ip(container_name) {
+    let cached = state.cached_container_ip(container_name);
+    let from_cache = cached.is_some();
+    let ip = match cached {
         Some(ip) => Some(ip),
-        None => match containers::container_ip(state.docker(), container_name).await {
-            Ok(Some(ip)) => {
-                state.cache_container_ip(container_name, ip.clone());
-                Some(ip)
-            }
-            Ok(None) => None,
-            Err(err) => {
-                tracing::error!(error = %err, app = app_name, "container lookup failed");
-                None
-            }
-        },
+        None => resolve_and_cache_container_ip(state, app_name, container_name).await,
     };
 
-    match ip {
-        Some(ip) => {
-            reverse_proxy::proxy(
-                state.proxy_client(),
-                &ip,
-                run_config.container_port,
-                request,
-            )
-            .await
+    let Some(ip) = ip else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+
+    match reverse_proxy::proxy(
+        state.proxy_client(),
+        &ip,
+        run_config.container_port,
+        request,
+    )
+    .await
+    {
+        Ok(response) => response,
+        // Cached IP is stale (container recreated on redeploy) - evict so
+        // the next request re-resolves instead of waiting out the TTL.
+        Err(()) if from_cache => {
+            state.evict_container_ip(container_name);
+            StatusCode::BAD_GATEWAY.into_response()
         }
-        None => StatusCode::BAD_GATEWAY.into_response(),
+        Err(()) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+async fn resolve_and_cache_container_ip(
+    state: &AppState,
+    app_name: &str,
+    container_name: &str,
+) -> Option<String> {
+    match containers::container_ip(state.docker(), container_name).await {
+        Ok(Some(ip)) => {
+            state.cache_container_ip(container_name, ip.clone());
+            Some(ip)
+        }
+        Ok(None) => None,
+        Err(err) => {
+            tracing::error!(error = %err, app = app_name, "container lookup failed");
+            None
+        }
     }
 }

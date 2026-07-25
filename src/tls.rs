@@ -137,7 +137,7 @@ mod tests {
         std::fs::copy(&new_key_path, &key_path).unwrap();
         // Force a distinct mtime - coarse filesystem resolution can
         // otherwise land the copy on the same timestamp.
-        let future = std::time::SystemTime::now() + Duration::from_secs(60);
+        let future = std::time::SystemTime::now() + Duration::from_mins(1);
         std::fs::File::open(&cert_path)
             .unwrap()
             .set_modified(future)

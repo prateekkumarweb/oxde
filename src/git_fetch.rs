@@ -35,6 +35,7 @@ pub fn clone_shallow(
 
     let mut prepare = gix::prepare_clone(repo_url, dest)
         .map_err(|err| AppError::Git(err.to_string()))?
+        .with_in_memory_config_overrides(["http.followRedirects=false"])
         .with_ref_name(Some(branch))
         .map_err(|err| AppError::Git(err.to_string()))?
         .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(NonZeroU32::MIN));
@@ -55,6 +56,10 @@ pub fn clone_shallow(
 /// Rejects `repo_url` unless every address its host resolves to is
 /// publicly routable - blocks git deploys from reaching internal services
 /// or cloud metadata endpoints (e.g. `169.254.169.254`) via SSRF.
+///
+/// Not TOCTOU-proof: `clone_shallow` re-resolves the host itself, and gix
+/// exposes no hook to pin the address this check already validated. Redirect-
+/// following is disabled there instead, closing the bypass we can control.
 fn ensure_host_is_public(repo_url: &str) -> AppResult<()> {
     let url = gix::url::parse(repo_url).map_err(|err| AppError::Git(err.to_string()))?;
     let Some(host) = url.host() else {

@@ -349,15 +349,15 @@ async fn execute_git_deployment(
     let (checkout_dir, commit_sha) = match clone_result {
         Ok(Ok(Ok(result))) => result,
         Ok(Ok(Err(err))) => {
-            std::fs::remove_dir_all(&staging).ok();
+            storage::remove_dir_all_logged(&staging);
             return Err(err);
         }
         Ok(Err(join_err)) => {
-            std::fs::remove_dir_all(&staging).ok();
+            storage::remove_dir_all_logged(&staging);
             return Err(AppError::Io(std::io::Error::other(join_err.to_string())));
         }
         Err(_) => {
-            std::fs::remove_dir_all(&staging).ok();
+            storage::remove_dir_all_logged(&staging);
             return Err(AppError::Git("timed out waiting for git fetch".to_string()));
         }
     };
@@ -385,7 +385,7 @@ async fn execute_git_deployment(
         )
         .await
         {
-            std::fs::remove_dir_all(&staging).ok();
+            storage::remove_dir_all_logged(&staging);
             return Err(err);
         }
     }
@@ -401,7 +401,7 @@ async fn execute_git_deployment(
     )
     .await
     {
-        std::fs::remove_dir_all(&staging).ok();
+        storage::remove_dir_all_logged(&staging);
         return Err(err);
     }
 
@@ -504,7 +504,7 @@ pub async fn upload_deployment(
     let (original_filename, upload_size_bytes) = match upload {
         Ok(fields) => fields,
         Err(err) => {
-            tokio::fs::remove_file(&zip_path).await.ok();
+            storage::remove_file_logged(&zip_path).await;
             return Err(err);
         }
     };
@@ -518,7 +518,7 @@ pub async fn upload_deployment(
     )
     .await;
 
-    tokio::fs::remove_file(&zip_path).await.ok();
+    storage::remove_file_logged(&zip_path).await;
     result
 }
 

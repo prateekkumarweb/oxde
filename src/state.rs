@@ -97,6 +97,12 @@ impl AppState {
             .insert(container_name.to_string(), (ip, Instant::now()));
     }
 
+    /// Drops a cached IP immediately instead of waiting out
+    /// [`CONTAINER_IP_TTL`] - used once a proxied request finds it stale.
+    pub fn evict_container_ip(&self, container_name: &str) {
+        self.inner.container_ips.pin().remove(container_name);
+    }
+
     pub fn max_upload_bytes(&self) -> u64 {
         self.inner.max_upload_bytes
     }

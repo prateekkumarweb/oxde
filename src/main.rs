@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to ensure the run-mode container network exists")?;
     fail_pending_deployments(&state).await;
     reconcile_run_mode_containers(&state).await;
+    auth::spawn_login_attempts_sweeper(state.clone());
 
     let app = routes::build_router(state);
 

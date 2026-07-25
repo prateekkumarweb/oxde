@@ -63,6 +63,8 @@ pub enum AppError {
     ContainerStartFailed(String),
     #[error("container backend unavailable: {0}")]
     ContainerUnavailable(String),
+    #[error("{0}")]
+    CommandFailed(String),
     #[error("deployment {0} has no container")]
     NoContainer(String),
     #[error("upload too large")]
@@ -111,12 +113,19 @@ impl IntoResponse for AppError {
             | Self::InvalidPassword(_)
             | Self::InvalidTokenExpiry(_)
             | Self::NoContainer(_)
-            | Self::MissingUploadFile => StatusCode::BAD_REQUEST,
+            | Self::MissingUploadFile
+            // Caused by the caller's own repo/branch or install/build/start
+            // command, not a server fault - the detail (e.g. "repository not
+            // found", "command exited 1: ...") is exactly what's needed to
+            // fix it, and is already visible via the deployment's own logs,
+            // so nothing new leaks by keeping it in the response too.
+            | Self::Git(_)
+            | Self::CommandFailed(_) => StatusCode::BAD_REQUEST,
             Self::InvalidCredentials | Self::Unauthenticated => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::TooManyLoginAttempts(_) => StatusCode::TOO_MANY_REQUESTS,
-            Self::Git(_) | Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
+            Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
                 StatusCode::BAD_GATEWAY
             }
             Self::Zip(_)

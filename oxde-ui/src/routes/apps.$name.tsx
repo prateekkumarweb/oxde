@@ -232,7 +232,7 @@ function AppDetail() {
             </div>
           )}
           <a
-            href={`http://${appHost}/`}
+            href={`${window.location.protocol}//${appHost}/`}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"

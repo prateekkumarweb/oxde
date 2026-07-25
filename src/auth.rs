@@ -91,6 +91,31 @@ pub fn clear_login_attempts(state: &AppState, ip: IpAddr) {
     state.login_attempts().pin().remove(&ip);
 }
 
+/// Poll interval for [`spawn_login_attempts_sweeper`] - infrequent since
+/// entries only need bounding, not prompt removal.
+const LOGIN_ATTEMPTS_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
+
+/// Periodically evicts expired-window entries from `login_attempts` -
+/// without this, an attacker (or a botnet) failing logins from many
+/// distinct IPs grows the map forever, since entries are otherwise only
+/// removed by [`clear_login_attempts`] on that same IP's next success.
+pub fn spawn_login_attempts_sweeper(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(LOGIN_ATTEMPTS_SWEEP_INTERVAL).await;
+            sweep_expired_login_attempts(&state);
+        }
+    });
+}
+
+fn sweep_expired_login_attempts(state: &AppState) {
+    let now = accounts::now_epoch_secs();
+    state
+        .login_attempts()
+        .pin()
+        .retain(|_, attempts| now - attempts.window_start <= LOGIN_LOCKOUT_WINDOW_SECS);
+}
+
 /// Random 32-byte token, base64-encoded - opaque, unguessable, and doesn't
 /// need to be looked up against a hash (unlike the password itself), since
 /// losing it only grants what the session already grants.
@@ -432,6 +457,27 @@ mod tests {
         assert!(check_login_lockout(&state, ip).is_err());
         clear_login_attempts(&state, ip);
         assert!(check_login_lockout(&state, ip).is_ok());
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_only_expired_windows() {
+        let state = test_state("sweep-expired").await;
+        let expired_ip = test_ip(6);
+        let fresh = test_ip(7);
+        state.login_attempts().pin().insert(
+            expired_ip,
+            LoginAttempts {
+                count: 3,
+                window_start: accounts::now_epoch_secs() - LOGIN_LOCKOUT_WINDOW_SECS - 1,
+            },
+        );
+        record_failed_login(&state, fresh);
+
+        sweep_expired_login_attempts(&state);
+
+        let attempts = state.login_attempts().pin();
+        assert!(attempts.get(&expired_ip).is_none());
+        assert!(attempts.get(&fresh).is_some());
     }
 
     fn headers_with_cookie(name: &str, value: &str) -> HeaderMap {
