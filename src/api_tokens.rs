@@ -30,7 +30,7 @@ pub fn generate() -> AppResult<(String, String, String)> {
 }
 
 fn random_urlsafe(len: usize) -> String {
-    use base64::Engine as _;
+    use base64::Engine;
     let bytes: Vec<u8> = (0..len).map(|_| rand::random::<u8>()).collect();
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }

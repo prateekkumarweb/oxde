@@ -2,7 +2,7 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
 };
-use base64::Engine as _;
+use base64::Engine;
 use oxde_db::models::User;
 
 use crate::{

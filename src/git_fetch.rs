@@ -1,5 +1,6 @@
 use std::{
-    io::Write as _,
+    io::Write,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs},
     num::NonZeroU32,
     path::{Component, Path, PathBuf},
     sync::{
@@ -27,6 +28,8 @@ pub fn clone_shallow(
     dest: &Path,
     log_target: Option<LogTarget>,
 ) -> AppResult<String> {
+    ensure_host_is_public(repo_url)?;
+
     let should_interrupt = AtomicBool::new(false);
     let progress = CloneProgress::start(log_target);
 
@@ -47,6 +50,71 @@ pub fn clone_shallow(
         .head_id()
         .map_err(|err| AppError::Git(err.to_string()))?;
     Ok(head_id.to_string())
+}
+
+/// Rejects `repo_url` unless every address its host resolves to is
+/// publicly routable - blocks git deploys from reaching internal services
+/// or cloud metadata endpoints (e.g. `169.254.169.254`) via SSRF.
+fn ensure_host_is_public(repo_url: &str) -> AppResult<()> {
+    let url = gix::url::parse(repo_url).map_err(|err| AppError::Git(err.to_string()))?;
+    let Some(host) = url.host() else {
+        return Err(AppError::Git(format!(
+            "repo URL {repo_url} has no host to validate"
+        )));
+    };
+    let port = url.port_or_default().unwrap_or(0);
+
+    let mut resolved_any = false;
+    for addr in (host, port)
+        .to_socket_addrs()
+        .map_err(|err| AppError::Git(format!("could not resolve host {host}: {err}")))?
+    {
+        resolved_any = true;
+        if !is_public_ip(addr.ip()) {
+            return Err(AppError::Git(format!(
+                "repo host {host} resolves to a non-public address"
+            )));
+        }
+    }
+    if !resolved_any {
+        return Err(AppError::Git(format!(
+            "repo host {host} did not resolve to any address"
+        )));
+    }
+    Ok(())
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_ipv4(v4),
+        IpAddr::V6(v6) => is_public_ipv6(v6),
+    }
+}
+
+fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    !(ip.is_private()
+        || ip.is_loopback()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_documentation()
+        || ip.is_multicast()
+        || ip.is_unspecified()
+        || octets[0] == 0 // "this network", 0.0.0.0/8
+        || (octets[0] == 100 && (64..=127).contains(&octets[1])) // CGNAT, 100.64.0.0/10
+        || (octets[0] == 198 && (18..=19).contains(&octets[1])) // benchmarking, 198.18.0.0/15
+        || octets[0] >= 240) // reserved, 240.0.0.0/4
+}
+
+fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_public_ipv4(mapped);
+    }
+    !(ip.is_loopback()
+        || ip.is_multicast()
+        || ip.is_unspecified()
+        || ip.is_unique_local()
+        || ip.is_unicast_link_local())
 }
 
 /// Deregisters once every `CloneProgress` sharing this sink is dropped.
@@ -275,8 +343,56 @@ pub fn resolve_publish_dir(checkout_dir: &Path, publish_dir: Option<&str>) -> Ap
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_publish_dir;
+    use super::{ensure_host_is_public, is_public_ipv4, is_public_ipv6, resolve_publish_dir};
     use crate::error::AppError;
+
+    #[test]
+    fn ipv4_private_and_reserved_ranges_are_rejected() {
+        assert!(!is_public_ipv4("10.0.0.1".parse().unwrap()));
+        assert!(!is_public_ipv4("172.16.0.1".parse().unwrap()));
+        assert!(!is_public_ipv4("192.168.1.1".parse().unwrap()));
+        assert!(!is_public_ipv4("127.0.0.1".parse().unwrap()));
+        assert!(!is_public_ipv4("169.254.169.254".parse().unwrap())); // cloud metadata
+        assert!(!is_public_ipv4("100.64.0.1".parse().unwrap())); // CGNAT
+        assert!(!is_public_ipv4("0.0.0.0".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv4_public_address_is_accepted() {
+        assert!(is_public_ipv4("8.8.8.8".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv6_private_and_reserved_ranges_are_rejected() {
+        assert!(!is_public_ipv6("::1".parse().unwrap())); // loopback
+        assert!(!is_public_ipv6("fc00::1".parse().unwrap())); // unique local
+        assert!(!is_public_ipv6("fe80::1".parse().unwrap())); // link local
+        assert!(!is_public_ipv6("::ffff:10.0.0.1".parse().unwrap())); // IPv4-mapped private
+    }
+
+    #[test]
+    fn ipv6_public_address_is_accepted() {
+        assert!(is_public_ipv6("2001:4860:4860::8888".parse().unwrap()));
+    }
+
+    #[test]
+    fn ensure_host_is_public_rejects_ip_literal_targets() {
+        for url in [
+            "http://127.0.0.1/repo.git",
+            "http://169.254.169.254/latest/meta-data",
+            "https://192.168.1.1/repo.git",
+        ] {
+            assert!(
+                ensure_host_is_public(url).is_err(),
+                "{url} should have been rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn ensure_host_is_public_accepts_public_ip_literal() {
+        ensure_host_is_public("https://8.8.8.8/repo.git").expect("public IP should be allowed");
+    }
 
     fn tempdir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
