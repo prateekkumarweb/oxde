@@ -127,18 +127,19 @@ impl IntoResponse for AppError {
         };
         // 4xx are routine (bad input, no session yet, no permission) - only
         // an actual server fault (5xx) is worth an ERROR-level log.
-        if status.is_server_error() {
+        //
+        // 5xx bodies never echo `self` back to the client: variants like
+        // `Db`/`Io`/`Zip`/`PasswordHash`/`CorruptData` wrap internal error
+        // strings (DB engine errors, filesystem paths, ...) that would leak
+        // implementation details to an authenticated but untrusted caller.
+        let message = if status.is_server_error() {
             tracing::error!(error = %self, "request failed");
+            "internal server error".to_string()
         } else {
             tracing::debug!(error = %self, "request failed");
-        }
-        (
-            status,
-            Json(ErrorBody {
-                error: self.to_string(),
-            }),
-        )
-            .into_response()
+            self.to_string()
+        };
+        (status, Json(ErrorBody { error: message })).into_response()
     }
 }
 
