@@ -1,13 +1,17 @@
 use axum::{
-    Router, middleware,
-    response::{IntoResponse, Redirect},
+    Router,
+    extract::Request,
+    http::{HeaderMap, Method},
+    middleware,
+    response::{IntoResponse, Redirect, Response},
     routing::get,
 };
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    auth::{ApiUser, CurrentUser},
+    auth::{self, ApiUser, CurrentUser},
     dashboard_assets,
+    error::AppError,
     state::AppState,
 };
 
@@ -22,13 +26,18 @@ pub fn build_router(state: AppState) -> Router {
     let public_api = Router::new().nest("/api", auth_routes::public_router());
 
     // Cookie or bearer token; `/api/users` below stays cookie-only.
-    let bearer_or_cookie_api = Router::new().nest("/api", api::router(&state)).route_layer(
-        middleware::from_fn_with_state(state.clone(), require_authenticated_bearer_or_cookie),
-    );
+    let bearer_or_cookie_api = Router::new()
+        .nest("/api", api::router(&state))
+        .route_layer(middleware::from_fn(enforce_same_origin))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_authenticated_bearer_or_cookie,
+        ));
 
     let cookie_only_api = Router::new()
         .nest("/api", auth_routes::protected_router())
         .nest("/api/users", users::router())
+        .route_layer(middleware::from_fn(enforce_same_origin))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             require_authenticated,
@@ -64,9 +73,9 @@ pub fn build_router(state: AppState) -> Router {
 /// `require_admin` calls in `routes::users`).
 async fn require_authenticated(
     _current_user: CurrentUser,
-    request: axum::extract::Request,
+    request: Request,
     next: middleware::Next,
-) -> axum::response::Response {
+) -> Response {
     next.run(request).await
 }
 
@@ -74,8 +83,20 @@ async fn require_authenticated(
 /// bearer token satisfies it too, not just the session cookie.
 async fn require_authenticated_bearer_or_cookie(
     _current_user: ApiUser,
-    request: axum::extract::Request,
+    request: Request,
     next: middleware::Next,
-) -> axum::response::Response {
+) -> Response {
     next.run(request).await
+}
+
+/// Rejects state-changing requests that carry a session cookie but aren't
+/// same-origin (see `auth::verify_same_origin`).
+async fn enforce_same_origin(
+    method: Method,
+    headers: HeaderMap,
+    request: Request,
+    next: middleware::Next,
+) -> Result<Response, AppError> {
+    auth::verify_same_origin(&method, &headers)?;
+    Ok(next.run(request).await)
 }

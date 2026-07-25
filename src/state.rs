@@ -1,4 +1,5 @@
 use std::{
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -11,7 +12,7 @@ use bollard::Docker;
 use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
-use crate::{deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
+use crate::{auth::LoginAttempts, deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
 
 /// How long a resolved container IP is trusted before `container_ip` is
 /// asked again - bounds how long routing can stay wrong after a container
@@ -49,6 +50,7 @@ impl AppState {
                 container_ips: ConcurrentHashMap::new(),
                 db,
                 sessions: ConcurrentHashMap::new(),
+                login_attempts: ConcurrentHashMap::new(),
                 log_registry: LogRegistry::new(),
             }),
         }
@@ -64,6 +66,10 @@ impl AppState {
 
     pub fn sessions(&self) -> &ConcurrentHashMap<String, crate::auth::Session> {
         &self.inner.sessions
+    }
+
+    pub fn login_attempts(&self) -> &ConcurrentHashMap<IpAddr, LoginAttempts> {
+        &self.inner.login_attempts
     }
 
     pub fn docker(&self) -> &Docker {
@@ -190,6 +196,7 @@ struct Inner {
     container_ips: ConcurrentHashMap<String, (String, Instant)>,
     db: toasty::Db,
     sessions: ConcurrentHashMap<String, crate::auth::Session>,
+    login_attempts: ConcurrentHashMap<IpAddr, LoginAttempts>,
     log_registry: LogRegistry,
 }
 

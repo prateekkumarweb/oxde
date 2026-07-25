@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     accounts::AccountRole,
-    auth::{ApiUser, CurrentUser},
+    auth::{BearerUser, CurrentUser},
     authz, containers, deployment_logs,
     models::{self, AppSource, EnvVar},
     routes::api,
@@ -287,7 +287,13 @@ fn allowed_hosts(base_domain: &str) -> Vec<String> {
 }
 
 /// Stashes the resolved `CurrentUser` where `current_user_from` reads it back.
-async fn mcp_auth(current_user: ApiUser, mut request: Request, next: middleware::Next) -> Response {
+/// Bearer-token only - MCP clients are AI agents, never a browser, so
+/// there's no session cookie to fall back to.
+async fn mcp_auth(
+    current_user: BearerUser,
+    mut request: Request,
+    next: middleware::Next,
+) -> Response {
     request.extensions_mut().insert(current_user.0);
     next.run(request).await
 }

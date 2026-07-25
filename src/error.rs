@@ -47,6 +47,8 @@ pub enum AppError {
     TokenNotFound,
     #[error("invalid credentials")]
     InvalidCredentials,
+    #[error("too many failed login attempts - try again in {0} minute(s)")]
+    TooManyLoginAttempts(i64),
     #[error("password hashing failed: {0}")]
     PasswordHash(String),
     #[error("not authenticated")]
@@ -113,6 +115,7 @@ impl IntoResponse for AppError {
             Self::InvalidCredentials | Self::Unauthenticated => StatusCode::UNAUTHORIZED,
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::TooManyLoginAttempts(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Git(_) | Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
                 StatusCode::BAD_GATEWAY
             }

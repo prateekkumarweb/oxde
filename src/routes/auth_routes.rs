@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
+
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::HeaderMap,
     response::IntoResponse,
     routing::{get, post},
@@ -34,20 +36,28 @@ struct LoginRequest {
 
 async fn login(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LoginRequest>,
 ) -> AppResult<impl IntoResponse> {
+    let ip = addr.ip();
+    auth::check_login_lockout(&state, ip)?;
+
     let mut db = state.db().clone();
     let user = User::all()
         .filter(User::fields().username().eq(&body.username))
         .first()
         .exec(&mut db)
         .await
-        .map_err(AppError::Db)?
-        .ok_or(AppError::InvalidCredentials)?;
+        .map_err(AppError::Db)?;
 
-    if !accounts::verify_password(&body.password, &user.password_hash) {
-        return Err(AppError::InvalidCredentials);
-    }
+    let user = match user {
+        Some(user) if accounts::verify_password(&body.password, &user.password_hash) => user,
+        _ => {
+            auth::record_failed_login(&state, ip);
+            return Err(AppError::InvalidCredentials);
+        }
+    };
+    auth::clear_login_attempts(&state, ip);
 
     let token = auth::generate_session_token();
     state.sessions().pin().insert(

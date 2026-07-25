@@ -27,13 +27,13 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="grid min-h-svh lg:grid-cols-2">
-      <div className="hidden flex-col justify-center gap-6 border-r bg-muted/40 p-10 lg:flex">
+    <div className="flex flex-col lg:grid lg:min-h-svh lg:grid-cols-2">
+      <div className="flex flex-col items-center justify-center gap-6 p-10 text-center lg:items-start lg:border-r lg:bg-muted/40 lg:text-left">
         <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-32" />
         <div className="font-heading text-3xl font-semibold">OxDe</div>
         <p className="max-w-sm text-base text-muted-foreground">
-          A self-hostable alternative to Vercel, Netlify, and Coolify, designed to stay light on
-          resources, from a spare server to modest hardware.
+          A self-hostable alternative to Vercel, Netlify, and Coolify, small enough to run on a
+          Raspberry Pi.
         </p>
       </div>
 
