@@ -16,14 +16,17 @@ mod reverse_proxy;
 mod routes;
 mod state;
 mod storage;
+mod tls;
 mod zip_extract;
+
+use std::net::SocketAddr;
 
 use anyhow::Context;
 use oxde_db::models::User;
 
 use crate::{
     accounts::AccountRole,
-    config::Config,
+    config::{Config, TlsConfig},
     error::AppResult,
     models::{App, DeploymentStatus},
     state::{AppState, AppStateLimits},
@@ -97,14 +100,38 @@ async fn main() -> anyhow::Result<()> {
 
     let app = routes::build_router(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    let addr = listener.local_addr()?;
-    tracing::info!("OxDe server started, listening on http://{addr}");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await?;
+    match &config.tls {
+        TlsConfig::Off => {
+            let listener = tokio::net::TcpListener::bind(("0.0.0.0", config.http_port)).await?;
+            let addr = listener.local_addr()?;
+            tracing::info!("OxDe server started, listening on http://{addr}");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await?;
+        }
+        TlsConfig::Manual {
+            cert_path,
+            key_path,
+        } => {
+            let tls_config = tls::build_rustls_config(cert_path, key_path).await?;
+            tls::spawn_reload_watcher(tls_config.clone(), cert_path.clone(), key_path.clone());
+
+            let addr = SocketAddr::from(([0, 0, 0, 0], config.https_port));
+            tracing::info!("OxDe server started, listening on https://{addr}");
+            axum_server::bind_rustls(addr, tls_config)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to bind HTTPS port {} - if this is a permission error, grant \
+                         CAP_NET_BIND_SERVICE or run as root",
+                        config.https_port
+                    )
+                })?;
+        }
+    }
     Ok(())
 }
 

@@ -29,18 +29,24 @@ fn classify_host(host: &str, base_domain: &str) -> HostMatch {
     }
 }
 
+/// HTTP/2 (negotiated over TLS via ALPN) carries the host in the
+/// `:authority` pseudo-header, not a literal `Host` header - hyper
+/// surfaces that via `request.uri()`, not `request.headers()`.
+fn resolve_host(request: &Request<Body>) -> Option<String> {
+    request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| request.uri().authority().map(ToString::to_string))
+}
+
 pub async fn dispatch_by_host(
     State(state): State<AppState>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
-
-    let Some(host) = host else {
+    let Some(host) = resolve_host(&request) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -54,6 +60,36 @@ pub async fn dispatch_by_host(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_host_prefers_the_host_header() {
+        let request = Request::builder()
+            .uri("https://from-uri.example/")
+            .header(header::HOST, "from-header.example")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            resolve_host(&request).as_deref(),
+            Some("from-header.example")
+        );
+    }
+
+    #[test]
+    fn resolve_host_falls_back_to_uri_authority_without_a_host_header() {
+        // Mirrors an HTTP/2 request, whose `:authority` pseudo-header hyper
+        // surfaces in `request.uri()` rather than the header map.
+        let request = Request::builder()
+            .uri("https://from-uri.example/")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(resolve_host(&request).as_deref(), Some("from-uri.example"));
+    }
+
+    #[test]
+    fn resolve_host_is_none_without_a_host_header_or_uri_authority() {
+        let request = Request::builder().uri("/").body(Body::empty()).unwrap();
+        assert_eq!(resolve_host(&request), None);
+    }
 
     #[test]
     fn exact_base_domain_is_control_plane() {

@@ -6,11 +6,25 @@ admin_username = "admin"
 admin_password = "change-me"
 
 # Apps are served at <app-name>.<base_domain>. Use "localhost" for local
-# development (myapp.localhost:3000 resolves to loopback with no
-# /etc/hosts editing needed).
+# development (myapp.localhost:8080 resolves to loopback with no
+# /etc/hosts editing needed - see http_port below for the port).
 base_domain = "example.com"
 
 # Everything below is optional; values shown are the defaults.
+
+# Plain-HTTP port (tls.mode = "off"). 80 needs root/CAP_NET_BIND_SERVICE.
+# http_port = 80
+
+# HTTPS port (tls.mode = "manual"). 443 needs root/CAP_NET_BIND_SERVICE.
+# https_port = 443
+
+# TLS termination, off by default. mode = "manual" serves HTTPS from your
+# own cert/key.
+#
+# [tls]
+# mode = "manual"
+# cert_path = "/path/to/fullchain.pem"
+# key_path = "/path/to/privkey.pem"
 
 # Max accepted size of an uploaded deployment zip, in bytes.
 # max_upload_bytes = 209715200 # 200MB
