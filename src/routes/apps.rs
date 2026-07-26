@@ -5,10 +5,11 @@ use axum::{
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
 };
+use oxde_models::RunConfig;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
-use crate::{containers, models, models::RunConfig, reverse_proxy, state::AppState, storage};
+use crate::{containers, reverse_proxy, state::AppState, storage};
 
 enum ServeTarget {
     NotFound,
@@ -20,7 +21,7 @@ enum ServeTarget {
 }
 
 pub async fn serve(state: &AppState, app_name: &str, request: Request<Body>) -> Response {
-    if models::validate_slug(app_name).is_err() {
+    if oxde_models::validate_slug(app_name).is_err() {
         return StatusCode::NOT_FOUND.into_response();
     }
 

@@ -1,0 +1,16 @@
+[package]
+name = "oxde-models"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+jiff = { workspace = true, features = ["serde"] }
+schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+ts-rs = { workspace = true, features = ["jiff-impl"] }
+
+[dev-dependencies]
+serde_json.workspace = true

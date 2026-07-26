@@ -11,7 +11,6 @@ mod deployment_logs;
 mod error;
 mod git_fetch;
 mod host_stats;
-mod models;
 mod reverse_proxy;
 mod routes;
 mod state;
@@ -23,12 +22,12 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use oxde_db::models::User;
+use oxde_models::{App, DeploymentStatus};
 
 use crate::{
     accounts::AccountRole,
     config::{Config, TlsConfig},
     error::AppResult,
-    models::{App, DeploymentStatus},
     state::{AppState, AppStateLimits},
 };
 

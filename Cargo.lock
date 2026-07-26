@@ -3757,6 +3757,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "oxde-db",
+ "oxde-models",
  "papaya",
  "rand 0.10.2",
  "rcgen",
@@ -3788,6 +3789,18 @@ dependencies = [
  "toasty-core",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "oxde-models"
+version = "0.0.0"
+dependencies = [
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "ts-rs",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxde-db", "xtask"]
+members = ["oxde-db", "oxde-models", "xtask"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -24,6 +24,7 @@ gix = "0.86.0"
 hyper-util = "0.1.20"
 jiff = "0.2.34"
 oxde-db = { path = "oxde-db" }
+oxde-models = { path = "oxde-models" }
 papaya = "0.2.4"
 rand = "0.10.2"
 rcgen = "0.14.8"
@@ -67,6 +68,7 @@ gix = { workspace = true, features = ["blocking-network-client", "blocking-http-
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 jiff = { workspace = true, features = ["serde"] }
 oxde-db.workspace = true
+oxde-models.workspace = true
 papaya.workspace = true
 rand.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }

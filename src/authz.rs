@@ -1,8 +1,9 @@
+use oxde_models::{App, PermissionLevel};
+
 use crate::{
     accounts::AccountRole,
     auth::CurrentUser,
     error::{AppError, AppResult},
-    models::{App, PermissionLevel},
 };
 
 pub fn check_app_permission(

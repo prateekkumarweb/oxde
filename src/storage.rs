@@ -11,6 +11,11 @@ use oxde_db::models::{
     Deployment as DbDeployment, DeploymentState, PermissionLevel as DbPermissionLevel,
     User as DbUser,
 };
+use oxde_models::{
+    App, AppPermission, AppSource, BuildInfo, Deployment, DeploymentStatus, EnvVar, GitDeployMode,
+    GitDeploymentInfo, GitSource, PermissionLevel, validate_build_config, validate_env_vars,
+    validate_repo_url, validate_run_config, validate_slug,
+};
 use toasty::Db;
 use uuid::Uuid;
 
@@ -18,10 +23,6 @@ use crate::{
     containers,
     error::{AppError, AppResult},
     git_fetch,
-    models::{
-        self, App, AppSource, BuildInfo, Deployment, DeploymentStatus, GitDeployMode,
-        GitDeploymentInfo, GitSource,
-    },
     state::AppState,
 };
 
@@ -278,7 +279,7 @@ pub async fn find_user_by_api_token(
 
 /// A user deleted after being granted access leaves an orphaned grant with
 /// no matching `User` row - skipped rather than failing the whole app read.
-async fn load_permissions(db: &mut Db, app_row: &DbApp) -> AppResult<Vec<models::AppPermission>> {
+async fn load_permissions(db: &mut Db, app_row: &DbApp) -> AppResult<Vec<AppPermission>> {
     let rows = app_row.permissions().exec(db).await?;
 
     let mut user_ids: Vec<i64> = rows.iter().map(|row| row.user_id).collect();
@@ -298,18 +299,18 @@ async fn load_permissions(db: &mut Db, app_row: &DbApp) -> AppResult<Vec<models:
             continue;
         };
         let level = DbPermissionLevel::from_str(&row.level).map_err(AppError::CorruptData)?;
-        permissions.push(models::AppPermission {
+        permissions.push(AppPermission {
             username: username.clone(),
             level: match level {
-                DbPermissionLevel::Read => models::PermissionLevel::Read,
-                DbPermissionLevel::Write => models::PermissionLevel::Write,
+                DbPermissionLevel::Read => PermissionLevel::Read,
+                DbPermissionLevel::Write => PermissionLevel::Write,
             },
         });
     }
     Ok(permissions)
 }
 
-fn app_from_row(row: DbApp, permissions: Vec<models::AppPermission>) -> AppResult<App> {
+fn app_from_row(row: DbApp, permissions: Vec<AppPermission>) -> AppResult<App> {
     Ok(App {
         id: row.id.to_string(),
         name: row.name,
@@ -364,16 +365,16 @@ pub async fn create_app(
     state: &AppState,
     name: &str,
     source: AppSource,
-    env_vars: Vec<models::EnvVar>,
+    env_vars: Vec<EnvVar>,
     creator: Option<&str>,
 ) -> AppResult<App> {
-    models::validate_slug(name)?;
-    models::validate_env_vars(&env_vars)?;
+    validate_slug(name)?;
+    validate_env_vars(&env_vars)?;
     if let AppSource::Git(ref git_source) = source {
-        models::validate_repo_url(&git_source.repo_url)?;
+        validate_repo_url(&git_source.repo_url)?;
         match &git_source.mode {
-            GitDeployMode::Run(run) => models::validate_run_config(run)?,
-            GitDeployMode::Build(build) => models::validate_build_config(build)?,
+            GitDeployMode::Run(run) => validate_run_config(run)?,
+            GitDeployMode::Build(build) => validate_build_config(build)?,
             GitDeployMode::Static { .. } => {}
         }
     }
@@ -470,10 +471,10 @@ pub async fn update_app(
     state: &AppState,
     app_id: &str,
     name: Option<&str>,
-    env_vars: Option<Vec<models::EnvVar>>,
+    env_vars: Option<Vec<EnvVar>>,
 ) -> AppResult<App> {
     if let Some(env_vars) = &env_vars {
-        models::validate_env_vars(env_vars)?;
+        validate_env_vars(env_vars)?;
     }
     let mut db = state.db().clone();
     let mut row = find_app_row_by_id(&mut db, app_id).await?;
@@ -481,7 +482,7 @@ pub async fn update_app(
     if let Some(name) = name
         && name != row.name.as_str()
     {
-        models::validate_slug(name)?;
+        validate_slug(name)?;
         if DbApp::all()
             .filter(DbApp::fields().name().eq(name))
             .first()
@@ -511,7 +512,7 @@ pub async fn update_app(
 pub async fn update_app_permissions(
     state: &AppState,
     app_id: &str,
-    permissions: Vec<models::AppPermission>,
+    permissions: Vec<AppPermission>,
 ) -> AppResult<App> {
     let mut db = state.db().clone();
     let app_row = find_app_row_by_id(&mut db, app_id).await?;
@@ -531,8 +532,8 @@ pub async fn update_app_permissions(
         .await?;
     for (user_id, level) in resolved {
         let db_level = match level {
-            models::PermissionLevel::Read => DbPermissionLevel::Read,
-            models::PermissionLevel::Write => DbPermissionLevel::Write,
+            PermissionLevel::Read => DbPermissionLevel::Read,
+            PermissionLevel::Write => DbPermissionLevel::Write,
         };
         DbAppPermission::create()
             .app_id(app_row.id)
@@ -967,6 +968,8 @@ pub async fn delete_deployment(
 mod tests {
     use std::io::Cursor;
 
+    use oxde_models::{AppSource, DeploymentStatus, GitDeployMode, GitSource};
+
     use super::{
         activate_deployment, create_app, create_deployment, create_pending_git_deployment,
         delete_app, delete_deployment, get_app, get_app_by_id, list_apps, list_deployments,
@@ -974,7 +977,6 @@ mod tests {
     };
     use crate::{
         error::AppError,
-        models::{AppSource, DeploymentStatus, GitDeployMode, GitSource},
         state::{AppState, AppStateLimits},
     };
 

@@ -16,13 +16,13 @@ use bollard::{
 };
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
+use oxde_models::{EnvVar, RunConfig};
 use serde::Serialize;
 use ts_rs::TS;
 
 use crate::{
     deployment_logs::LogTarget,
     error::{AppError, AppResult},
-    models::{EnvVar, RunConfig},
 };
 
 fn env_strings(env_vars: &[EnvVar]) -> Vec<String> {
@@ -490,8 +490,9 @@ pub async fn is_running(docker: &Docker, name: &str) -> AppResult<bool> {
 /// reachable, so a missing Podman shows up as a test failure.
 #[cfg(test)]
 mod live_tests {
+    use oxde_models::{RunConfig, RunImage};
+
     use super::*;
-    use crate::models::{RunConfig, RunImage};
 
     fn temp_checkout(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(

@@ -85,6 +85,18 @@ pub enum AppError {
     CorruptData(String),
 }
 
+impl From<oxde_models::ModelError> for AppError {
+    fn from(err: oxde_models::ModelError) -> Self {
+        match err {
+            oxde_models::ModelError::InvalidName(name) => Self::InvalidName(name),
+            oxde_models::ModelError::InvalidRepoUrl(url) => Self::InvalidRepoUrl(url),
+            oxde_models::ModelError::InvalidRunConfig(reason) => Self::InvalidRunConfig(reason),
+            oxde_models::ModelError::InvalidBuildConfig(reason) => Self::InvalidBuildConfig(reason),
+            oxde_models::ModelError::InvalidEnvVar(key) => Self::InvalidEnvVar(key),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,

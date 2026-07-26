@@ -1,8 +1,30 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::error::{AppError, AppResult};
+/// Validation failures for the model types below.
+///
+/// Kept separate from the main crate's `AppError` so this crate has no
+/// dependency on axum/HTTP concerns - `oxde::error::AppError` converts these
+/// via `From`, preserving today's exact error variants/messages/status
+/// codes.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ModelError {
+    #[error("invalid name: {0}")]
+    InvalidName(String),
+    #[error("invalid repo url: {0}")]
+    InvalidRepoUrl(String),
+    #[error("invalid run config: {0}")]
+    InvalidRunConfig(String),
+    #[error("invalid build config: {0}")]
+    InvalidBuildConfig(String),
+    #[error("invalid env var key: {0}")]
+    InvalidEnvVar(String),
+}
+
+pub type ModelResult<T> = Result<T, ModelError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct App {
@@ -25,12 +47,14 @@ pub struct App {
 impl App {
     /// Whether `username` (a `Member`, not `Admin` - callers check that
     /// separately) has at least `required` access to this app.
+    #[must_use]
     pub fn has_permission(&self, username: &str, required: PermissionLevel) -> bool {
         self.permissions
             .iter()
             .any(|grant| grant.username == username && grant.level.satisfies(required))
     }
 
+    #[must_use]
     pub const fn run_config(&self) -> Option<&RunConfig> {
         match &self.source {
             AppSource::Git(git_source) => match &git_source.mode {
@@ -143,6 +167,7 @@ pub enum RunImage {
 impl RunImage {
     /// The curated catalog this maps to - deliberately not arbitrary
     /// images/Dockerfiles.
+    #[must_use]
     pub const fn image_tag(self) -> &'static str {
         match self {
             Self::Node24 => "docker.io/library/node:24",
@@ -154,30 +179,43 @@ impl RunImage {
 /// Only `https://`/`http://`/`ssh://`/`git://` are accepted - a cheap
 /// footgun guard, not a hard security boundary (this is admin-only input,
 /// same trust level as an uploaded zip).
-pub fn validate_repo_url(repo_url: &str) -> AppResult<()> {
+///
+/// # Errors
+///
+/// Returns `ModelError::InvalidRepoUrl` if `repo_url` doesn't start with an
+/// allowed scheme.
+pub fn validate_repo_url(repo_url: &str) -> ModelResult<()> {
     let allowed = ["https://", "http://", "ssh://", "git://"];
     if allowed.iter().any(|prefix| repo_url.starts_with(prefix)) {
         Ok(())
     } else {
-        Err(AppError::InvalidRepoUrl(repo_url.to_string()))
+        Err(ModelError::InvalidRepoUrl(repo_url.to_string()))
     }
 }
 
-pub fn validate_run_config(run: &RunConfig) -> AppResult<()> {
+/// # Errors
+///
+/// Returns `ModelError::InvalidRunConfig` if `container_port` is `0` or
+/// `start_command` is empty.
+pub fn validate_run_config(run: &RunConfig) -> ModelResult<()> {
     if run.container_port == 0 {
-        return Err(AppError::InvalidRunConfig(
+        return Err(ModelError::InvalidRunConfig(
             "container port must be 1-65535".to_string(),
         ));
     }
     if run.start_command.trim().is_empty() {
-        return Err(AppError::InvalidRunConfig(
+        return Err(ModelError::InvalidRunConfig(
             "start command is required in run mode".to_string(),
         ));
     }
     Ok(())
 }
 
-pub fn validate_env_vars(env_vars: &[EnvVar]) -> AppResult<()> {
+/// # Errors
+///
+/// Returns `ModelError::InvalidEnvVar` for the first key that isn't a valid
+/// identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+pub fn validate_env_vars(env_vars: &[EnvVar]) -> ModelResult<()> {
     for env_var in env_vars {
         let valid = !env_var.key.is_empty()
             && env_var
@@ -190,20 +228,24 @@ pub fn validate_env_vars(env_vars: &[EnvVar]) -> AppResult<()> {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_');
         if !valid {
-            return Err(AppError::InvalidEnvVar(env_var.key.clone()));
+            return Err(ModelError::InvalidEnvVar(env_var.key.clone()));
         }
     }
     Ok(())
 }
 
-pub fn validate_build_config(build: &BuildConfig) -> AppResult<()> {
+/// # Errors
+///
+/// Returns `ModelError::InvalidBuildConfig` if `command` or `output_dir` is
+/// empty.
+pub fn validate_build_config(build: &BuildConfig) -> ModelResult<()> {
     if build.command.trim().is_empty() {
-        return Err(AppError::InvalidBuildConfig(
+        return Err(ModelError::InvalidBuildConfig(
             "build command is required".to_string(),
         ));
     }
     if build.output_dir.trim().is_empty() {
-        return Err(AppError::InvalidBuildConfig(
+        return Err(ModelError::InvalidBuildConfig(
             "output dir is required".to_string(),
         ));
     }
@@ -266,7 +308,13 @@ pub struct BuildInfo {
 
 /// Slugs double as directory names and `<name>.<base_domain>` subdomain
 /// labels, so they're restricted to what's safe in both places.
-pub fn validate_slug(name: &str) -> AppResult<()> {
+///
+/// # Errors
+///
+/// Returns `ModelError::InvalidName` if `name` is empty, over 63 characters,
+/// starts/ends with `-`, or contains anything outside
+/// `[a-z0-9-]`.
+pub fn validate_slug(name: &str) -> ModelResult<()> {
     let valid = !name.is_empty()
         && name.len() <= 63
         && !name.starts_with('-')
@@ -278,7 +326,7 @@ pub fn validate_slug(name: &str) -> AppResult<()> {
     if valid {
         Ok(())
     } else {
-        Err(AppError::InvalidName(name.to_string()))
+        Err(ModelError::InvalidName(name.to_string()))
     }
 }
 

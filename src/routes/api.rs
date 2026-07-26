@@ -11,6 +11,7 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
+use oxde_models::{AppPermission, AppSource, Deployment, EnvVar, GitDeployMode, GitSource};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
@@ -22,7 +23,6 @@ use crate::{
     deployment_logs::{self, LogKind, LogTarget},
     error::{AppError, AppResult},
     host_stats::{self, HostStats},
-    models::{self, AppPermission, AppSource, Deployment, EnvVar, GitDeployMode, GitSource},
     state::AppState,
     storage,
 };
@@ -84,9 +84,9 @@ async fn enforce_app_access(
         .ok_or_else(|| AppError::AppNotFound(String::new()))?;
     let app = storage::get_app_by_id(&state, app_id).await?;
     let required = if method == Method::GET || method == Method::HEAD {
-        models::PermissionLevel::Read
+        oxde_models::PermissionLevel::Read
     } else {
-        models::PermissionLevel::Write
+        oxde_models::PermissionLevel::Write
     };
     authz::check_app_permission(&current_user, &app, required)?;
     Ok(next.run(request).await)
@@ -107,7 +107,7 @@ pub struct AppView {
     pub(crate) permissions: Vec<AppPermission>,
 }
 
-pub async fn app_view(state: &AppState, app: crate::models::App) -> AppView {
+pub async fn app_view(state: &AppState, app: oxde_models::App) -> AppView {
     let active_deployment_id = storage::active_deployment_id(state, &app.id).await;
     AppView {
         id: app.id,
@@ -197,7 +197,7 @@ async fn list_apps(
     let mut views = Vec::with_capacity(apps.len());
     for app in apps {
         if matches!(current_user.role, AccountRole::Admin)
-            || app.has_permission(&current_user.username, models::PermissionLevel::Read)
+            || app.has_permission(&current_user.username, oxde_models::PermissionLevel::Read)
         {
             views.push(app_view(&state, app).await);
         }

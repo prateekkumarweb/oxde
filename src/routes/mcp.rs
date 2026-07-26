@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Router, extract::Request, http::request::Parts, middleware, response::Response};
+use oxde_models::{AppSource, EnvVar};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters},
@@ -16,7 +17,6 @@ use crate::{
     accounts::AccountRole,
     auth::{BearerUser, CurrentUser},
     authz, containers, deployment_logs,
-    models::{self, AppSource, EnvVar},
     routes::api,
     state::AppState,
     storage,
@@ -82,7 +82,7 @@ impl OxdeMcpServer {
         let mut views = Vec::with_capacity(apps.len());
         for app in apps {
             if matches!(current_user.role, AccountRole::Admin)
-                || app.has_permission(&current_user.username, models::PermissionLevel::Read)
+                || app.has_permission(&current_user.username, oxde_models::PermissionLevel::Read)
             {
                 views.push(api::app_view(&self.state, app).await);
             }
@@ -100,7 +100,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
         json_text(&api::app_view(&self.state, app).await)
     }
@@ -136,7 +136,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
         api::delete_app_with_containers(&self.state, &params.app_id)
             .await
@@ -153,7 +153,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
         let active_id = storage::active_deployment_id(&self.state, &params.app_id).await;
         let mut views = Vec::new();
@@ -176,7 +176,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
         let deployment = api::start_git_deployment(&self.state, &params.app_id)
             .await
@@ -194,7 +194,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
         api::activate_with_containers(&self.state, &params.app_id, &params.deployment_id)
             .await
@@ -211,7 +211,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Write)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Write)
             .map_err(|e| e.to_string())?;
         api::delete_deployment_with_containers(&self.state, &params.app_id, &params.deployment_id)
             .await
@@ -228,7 +228,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
         storage::get_deployment(&self.state, &params.app_id, &params.deployment_id)
             .await
@@ -254,7 +254,7 @@ impl OxdeMcpServer {
         let app = storage::get_app_by_id(&self.state, &params.app_id)
             .await
             .map_err(|e| e.to_string())?;
-        authz::check_app_permission(&current_user, &app, models::PermissionLevel::Read)
+        authz::check_app_permission(&current_user, &app, oxde_models::PermissionLevel::Read)
             .map_err(|e| e.to_string())?;
         let deployment =
             storage::get_deployment(&self.state, &params.app_id, &params.deployment_id)
