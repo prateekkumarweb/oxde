@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::Request,
-    http::{HeaderMap, Method},
+    http::{HeaderMap, HeaderValue, Method, header},
     middleware,
     response::{IntoResponse, Redirect, Response},
     routing::get,
@@ -60,11 +60,33 @@ pub fn build_router(state: AppState) -> Router {
         .route("/dashboard/", get(dashboard_assets::serve))
         .route("/dashboard/{*path}", get(dashboard_assets::serve))
         .with_state(state.clone())
+        .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state,
             host_routing::dispatch_by_host,
         ))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Only wraps the control-plane router, not proxied app responses (a
+/// deployed app's headers aren't ours to override). No `Strict-Transport-
+/// Security`: `tls.mode` is a single global switch, and HSTS caching would
+/// hard-break every app subdomain if it's flipped back to `"off"`.
+const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
+async fn security_headers(request: Request, next: middleware::Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(CSP),
+    );
+    response
 }
 
 /// Gates every route it's layered over on "does this request carry a

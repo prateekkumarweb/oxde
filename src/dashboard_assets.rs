@@ -1,6 +1,8 @@
+use std::fmt::Write;
+
 use axum::{
     body::Body,
-    http::{StatusCode, Uri, header},
+    http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Response},
 };
 use rust_embed::RustEmbed;
@@ -13,21 +15,31 @@ use rust_embed::RustEmbed;
 #[folder = "oxde-ui/dist"]
 struct DashboardAssets;
 
-/// Serves the embedded SPA under `/dashboard`. A path matching a real built
-/// file is served as-is. Anything else falls back to `index.html` so the
-/// client-side router resolves it - matching `base: "/dashboard/"` and
-/// `basepath: "/dashboard"` in the frontend's own config - unless it's under
-/// `assets/`, where a miss means a stale/broken reference to a hashed build
-/// file and should 404 rather than silently return HTML.
-pub async fn serve(uri: Uri) -> Response {
+fn hex_encode(bytes: [u8; 32]) -> String {
+    bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// Serves the embedded SPA under `/dashboard`, falling back to `index.html`
+/// for client-side routing unless the miss is under `assets/` (a stale
+/// hashed-build reference, so 404 instead of silently returning HTML).
+///
+/// `assets/*` is content-hashed, so it's cached forever; everything else is
+/// unhashed and revalidated via `ETag`/`If-None-Match` on every load.
+pub async fn serve(uri: Uri, headers: HeaderMap) -> Response {
     let path = uri
         .path()
         .strip_prefix("/dashboard/")
         .or_else(|| uri.path().strip_prefix("/dashboard"))
         .unwrap_or("");
 
+    let is_hashed_asset = path.starts_with("assets/");
     let asset = DashboardAssets::get(path).or_else(|| {
-        if path.starts_with("assets/") {
+        if is_hashed_asset {
             None
         } else {
             DashboardAssets::get("index.html")
@@ -38,8 +50,26 @@ pub async fn serve(uri: Uri) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     };
 
+    let etag = format!("\"{}\"", hex_encode(asset.metadata.sha256_hash()));
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .is_some_and(|value| value.as_bytes() == etag.as_bytes())
+    {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response();
+    }
+
+    let cache_control = if is_hashed_asset {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+
     (
-        [(header::CONTENT_TYPE, asset.metadata.mimetype())],
+        [
+            (header::CONTENT_TYPE, asset.metadata.mimetype().to_string()),
+            (header::CACHE_CONTROL, cache_control.to_string()),
+            (header::ETAG, etag),
+        ],
         Body::from(asset.data),
     )
         .into_response()
