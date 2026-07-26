@@ -1,5 +1,5 @@
 name: Setup
-description: Install the Rust toolchain, Vite+, and build the oxde-ui dashboard frontend
+description: Install protoc, the Rust toolchain, Vite+, and build the oxde-ui dashboard frontend
 
 inputs:
   components:
@@ -10,6 +10,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install protoc
+      shell: bash
+      run: sudo apt update && sudo apt install -y protobuf-compiler
     - name: Install stable toolchain
       uses: dtolnay/rust-toolchain@stable
       with:

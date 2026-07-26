@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package oxde.hub.v1;
+
+// An agent dials out to the hub and holds this connection open. Ping is
+// the first RPC: it lets an agent confirm it's actually talking to a live
+// hub before anything else.
+service HubService {
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string version = 1;
+}

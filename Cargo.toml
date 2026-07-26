@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxde-db", "oxde-models", "xtask"]
+members = ["oxde-db", "oxde-models", "oxde-proto", "xtask"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -26,6 +26,7 @@ jiff = "0.2.34"
 oxde-db = { path = "oxde-db" }
 oxde-models = { path = "oxde-models" }
 papaya = "0.2.4"
+prost = "0.14.4"
 rand = "0.10.2"
 rcgen = "0.14.8"
 rmcp = "2.2.0"
@@ -39,6 +40,9 @@ toasty = "0.9.0"
 toasty-cli = "0.9.0"
 toasty-core = "0.9.0"
 tokio = "1.53.1"
+tonic = "0.14.6"
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
 toml = "1.1.3"
 tower = "0.5.3"
 tower-http = "0.7.0"

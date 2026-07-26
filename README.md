@@ -17,6 +17,7 @@ OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, written in 
 
 - **Rust**, edition 2024 (a recent stable toolchain, install via [rustup](https://rustup.rs)).
 - **[Vite+](https://viteplus.dev/guide/)** installed globally, so the `vp` command is on your `PATH`, used to build the dashboard frontend (`oxde-ui/`). Vite+ manages the Node.js runtime and package manager (`pnpm`) for you.
+- **`protoc`** (the Protocol Buffers compiler), needed to build `oxde-proto`'s generated gRPC code - install via your package manager (e.g. `brew install protobuf`, `apt install protobuf-compiler`).
 - **Podman** (rootless), reachable at its default local socket, needed to run git-sourced apps declared as a long-lived process ("run mode") or with a build step. Not required for zip-upload or static git deploys.
   - On macOS, container IPs aren't reachable from the host by default; install [`podman-mac-net-connect`](https://github.com/AlmirKadric-Published/podman-mac-net-connect) to route to them for local testing.
 
