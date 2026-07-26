@@ -43,14 +43,14 @@ pub async fn serve(state: &AppState, app_name: &str, request: Request<Body>) -> 
 }
 
 async fn resolve_serve_target(state: &AppState, app_name: &str) -> ServeTarget {
-    let Some(deployment_id) = storage::active_deployment_id(state, app_name).await else {
-        return ServeTarget::NotFound;
-    };
-    let Ok(deployment) = storage::get_deployment(state, app_name, &deployment_id).await else {
+    let Ok(app) = storage::get_app(state, app_name).await else {
         return ServeTarget::NotFound;
     };
 
-    let Ok(app) = storage::get_app(state, app_name).await else {
+    let Some(deployment_id) = storage::active_deployment_id(state, &app.id).await else {
+        return ServeTarget::NotFound;
+    };
+    let Ok(deployment) = storage::get_deployment(state, &app.id, &deployment_id).await else {
         return ServeTarget::NotFound;
     };
 

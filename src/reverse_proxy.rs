@@ -43,7 +43,7 @@ pub async fn proxy(
     match client.request(request).await {
         Ok(response) => Ok(response.map(Body::new)),
         Err(err) => {
-            tracing::error!(error = %err, target_ip, target_port, "reverse proxy request failed");
+            tracing::error!(error = ?err, target_ip, target_port, "reverse proxy request failed");
             Err(())
         }
     }

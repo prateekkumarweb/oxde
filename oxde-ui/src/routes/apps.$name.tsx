@@ -187,7 +187,7 @@ function AppDetail() {
     return <p className="text-muted-foreground">Loading…</p>;
   }
 
-  const backendPort = import.meta.env.DEV ? "3000" : window.location.port;
+  const backendPort = import.meta.env.DEV ? "8080" : window.location.port;
   const appHost = `${app.name}.${window.location.hostname}${backendPort ? `:${backendPort}` : ""}`;
   const gitSource = app.source.type === "git" ? app.source : null;
   const runConfig = gitSource?.mode.type === "run" ? gitSource.mode : null;

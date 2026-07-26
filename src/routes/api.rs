@@ -51,7 +51,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
 
     Router::new()
         .route("/apps", get(list_apps).post(create_app))
-        .nest("/apps/{id}", app_scoped)
+        .nest("/apps/{app_id}", app_scoped)
         .route("/host/stats", get(host_stats_endpoint))
 }
 
@@ -80,7 +80,7 @@ async fn enforce_app_access(
     next: Next,
 ) -> AppResult<Response> {
     let app_id = params
-        .get("id")
+        .get("app_id")
         .ok_or_else(|| AppError::AppNotFound(String::new()))?;
     let app = storage::get_app_by_id(&state, app_id).await?;
     let required = if method == Method::GET || method == Method::HEAD {
