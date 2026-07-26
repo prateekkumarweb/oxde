@@ -1,5 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub const AGENT_GRPC_PORT: u16 = 50051;
+
 pub mod hub {
     #[allow(clippy::pedantic, clippy::nursery)]
     pub mod v1 {

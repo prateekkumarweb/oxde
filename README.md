@@ -33,7 +33,7 @@ Building always builds the dashboard frontend first, since `dashboard_assets.rs`
 cargo xtask build              # builds oxde-ui/dist, then cargo build
 cargo xtask build -- --release # release build
 cargo xtask build-ui           # dashboard frontend only (vp install && vp build in oxde-ui/)
-cargo run                      # requires cargo xtask build-ui at least once first
+cargo run -p oxde-hub          # requires cargo xtask build-ui at least once first
 ```
 
 Other useful commands:

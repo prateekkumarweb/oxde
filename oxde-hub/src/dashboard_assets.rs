@@ -12,7 +12,7 @@ use rust_embed::RustEmbed;
 /// `oxde-ui/` is enough to pick up frontend changes without a Rust rebuild;
 /// release builds embed the files into the binary.
 #[derive(RustEmbed)]
-#[folder = "oxde-ui/dist"]
+#[folder = "../oxde-ui/dist"]
 struct DashboardAssets;
 
 fn hex_encode(bytes: [u8; 32]) -> String {

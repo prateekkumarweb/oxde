@@ -3782,7 +3782,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "oxde"
+name = "oxde-agent"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "oxde-proto",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "oxde-db"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "toasty",
+ "toasty-core",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "oxde-hub"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -3798,6 +3822,7 @@ dependencies = [
  "jiff",
  "oxde-db",
  "oxde-models",
+ "oxde-proto",
  "papaya",
  "rand 0.10.2",
  "rcgen",
@@ -3811,6 +3836,8 @@ dependencies = [
  "toasty",
  "tokio",
  "toml",
+ "tonic",
+ "tonic-prost",
  "tower",
  "tower-http 0.7.0",
  "tracing",
@@ -3818,17 +3845,6 @@ dependencies = [
  "ts-rs",
  "uuid",
  "zip",
-]
-
-[[package]]
-name = "oxde-db"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "toasty",
- "toasty-core",
- "tracing",
- "uuid",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ mod dashboard_assets;
 mod deployment_logs;
 mod error;
 mod git_fetch;
+mod grpc;
 mod host_stats;
 mod reverse_proxy;
 mod routes;
@@ -97,6 +98,12 @@ async fn main() -> anyhow::Result<()> {
     fail_pending_deployments(&state).await;
     reconcile_run_mode_containers(&state).await;
     auth::spawn_login_attempts_sweeper(state.clone());
+
+    tokio::spawn(async {
+        if let Err(err) = grpc::serve().await {
+            tracing::error!(error = ?err, "hub gRPC listener stopped");
+        }
+    });
 
     let app = routes::build_router(state);
 

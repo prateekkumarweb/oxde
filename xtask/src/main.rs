@@ -92,7 +92,12 @@ fn gen_types() -> bool {
         return false;
     }
 
-    run("cargo", &["test", "--quiet", "export_bindings"], &[], None)
+    run(
+        "cargo",
+        &["test", "--quiet", "-p", "oxde-hub", "export_bindings"],
+        &[],
+        None,
+    )
 }
 
 fn build_ui() -> bool {
