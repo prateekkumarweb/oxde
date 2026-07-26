@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 
 import type { AppPermission, EnvVar, RunImage } from "@/lib/types";
 
@@ -9,7 +9,7 @@ import { EnvVarEditor } from "@/components/env-var-editor";
 import { PermissionsEditor } from "@/components/permissions-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, useAuth } from "@/lib/auth";
 import {
   useActivateDeployment,
@@ -54,6 +55,15 @@ function formatBytes(bytes: number): string {
   }
   const precision = unitIndex === 0 ? 0 : 2;
   return `${value.toFixed(precision)} ${SIZE_UNITS[unitIndex]}`;
+}
+
+function Section({ title, children }: { title: ReactNode; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="border-b pb-2 font-heading text-lg font-medium">{title}</h2>
+      {children}
+    </section>
+  );
 }
 
 function AppDetail() {
@@ -202,35 +212,7 @@ function AppDetail() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          {renaming ? (
-            <form onSubmit={handleSubmitRename} className="flex items-center gap-2">
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={(event) => setRenameValue(event.target.value)}
-                className="rounded border bg-background px-2 py-1 font-heading text-2xl font-semibold"
-              />
-              <Button type="submit" size="sm" disabled={renameApp.isPending}>
-                Save
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setRenaming(false)}
-                disabled={renameApp.isPending}
-              >
-                Cancel
-              </Button>
-            </form>
-          ) : (
-            <div className="flex items-center gap-2">
-              <h1 className="font-heading text-2xl font-semibold">{app.name}</h1>
-              <Button variant="ghost" size="sm" onClick={handleStartRename}>
-                Rename
-              </Button>
-            </div>
-          )}
+          <h1 className="font-heading text-2xl font-semibold">{app.name}</h1>
           <a
             href={`${window.location.protocol}//${appHost}/`}
             target="_blank"
@@ -240,89 +222,99 @@ function AppDetail() {
             {appHost}
           </a>
         </div>
-        <Button variant="destructive" onClick={handleDeleteApp} disabled={busy}>
-          Delete app
-        </Button>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Card className="max-w-2xl">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            Source
-            <Badge variant="secondary">{gitSource ? "git" : "upload"}</Badge>
-            {gitSource && <Badge variant="outline">{gitSource.mode.type}</Badge>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {gitSource ? (
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-              <dt className="text-muted-foreground">Repo</dt>
-              <dd className="truncate">{gitSource.repo_url}</dd>
-              <dt className="text-muted-foreground">Branch</dt>
-              <dd>{gitSource.branch}</dd>
-              {runConfig && (
-                <>
-                  <dt className="text-muted-foreground">Image</dt>
-                  <dd>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {RUN_IMAGE_TAGS[runConfig.image]}
-                    </code>
-                  </dd>
-                  <dt className="text-muted-foreground">Port</dt>
-                  <dd>{runConfig.container_port}</dd>
-                  {runConfig.install_command && (
-                    <>
-                      <dt className="text-muted-foreground">Install</dt>
-                      <dd>
-                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                          {runConfig.install_command}
-                        </code>
-                      </dd>
-                    </>
-                  )}
-                  <dt className="text-muted-foreground">Start</dt>
-                  <dd>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {runConfig.start_command}
-                    </code>
-                  </dd>
-                </>
-              )}
-              {buildConfig && (
-                <>
-                  <dt className="text-muted-foreground">Image</dt>
-                  <dd>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {RUN_IMAGE_TAGS[buildConfig.image]}
-                    </code>
-                  </dd>
-                  <dt className="text-muted-foreground">Build</dt>
-                  <dd>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {buildConfig.command}
-                    </code>
-                  </dd>
-                  <dt className="text-muted-foreground">Output dir</dt>
-                  <dd>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                      {buildConfig.output_dir}
-                    </code>
-                  </dd>
-                </>
-              )}
-              {publishDir && (
-                <>
-                  <dt className="text-muted-foreground">Publish dir</dt>
-                  <dd>{publishDir}</dd>
-                </>
-              )}
-            </dl>
-          ) : (
-            <p className="text-sm text-muted-foreground">Deployments are uploaded as zip files.</p>
-          )}
+      <Tabs defaultValue="general">
+        <TabsList>
+          <TabsTrigger value="general">Info</TabsTrigger>
+          <TabsTrigger value="deployments">Deployments</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+        </TabsList>
 
+        <TabsContent value="general">
+          <Section
+            title={
+              <div className="flex items-center gap-2">
+                Source
+                <Badge variant="secondary">{gitSource ? "git" : "upload"}</Badge>
+                {gitSource && <Badge variant="outline">{gitSource.mode.type}</Badge>}
+              </div>
+            }
+          >
+            {gitSource ? (
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+                <dt className="text-muted-foreground">Repo</dt>
+                <dd className="truncate">{gitSource.repo_url}</dd>
+                <dt className="text-muted-foreground">Branch</dt>
+                <dd>{gitSource.branch}</dd>
+                {runConfig && (
+                  <>
+                    <dt className="text-muted-foreground">Image</dt>
+                    <dd>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {RUN_IMAGE_TAGS[runConfig.image]}
+                      </code>
+                    </dd>
+                    <dt className="text-muted-foreground">Port</dt>
+                    <dd>{runConfig.container_port}</dd>
+                    {runConfig.install_command && (
+                      <>
+                        <dt className="text-muted-foreground">Install</dt>
+                        <dd>
+                          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                            {runConfig.install_command}
+                          </code>
+                        </dd>
+                      </>
+                    )}
+                    <dt className="text-muted-foreground">Start</dt>
+                    <dd>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {runConfig.start_command}
+                      </code>
+                    </dd>
+                  </>
+                )}
+                {buildConfig && (
+                  <>
+                    <dt className="text-muted-foreground">Image</dt>
+                    <dd>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {RUN_IMAGE_TAGS[buildConfig.image]}
+                      </code>
+                    </dd>
+                    <dt className="text-muted-foreground">Build</dt>
+                    <dd>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {buildConfig.command}
+                      </code>
+                    </dd>
+                    <dt className="text-muted-foreground">Output dir</dt>
+                    <dd>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                        {buildConfig.output_dir}
+                      </code>
+                    </dd>
+                  </>
+                )}
+                {publishDir && (
+                  <>
+                    <dt className="text-muted-foreground">Publish dir</dt>
+                    <dd>{publishDir}</dd>
+                  </>
+                )}
+              </dl>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Deployments are uploaded as zip files.
+              </p>
+            )}
+          </Section>
+        </TabsContent>
+
+        <TabsContent value="deployments" className="flex flex-col gap-6">
           {gitSource ? (
             <Button onClick={handleDeployFromGit} disabled={busy} className="self-start">
               Pull latest &amp; deploy
@@ -335,172 +327,215 @@ function AppDetail() {
               </Button>
             </form>
           )}
-        </CardContent>
-      </Card>
 
-      {(runConfig || buildConfig) && (
-        <Card className="max-w-2xl">
-          <CardHeader>
-            <CardTitle>Environment variables</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <EnvVarEditor envVars={envVars} onChange={setLocalEnvVars} />
-            <Button
-              onClick={() => handleSaveEnvVars(envVars)}
-              disabled={busy || updateAppEnvVars.isPending || !envVarsDirty}
-              className="self-start"
-            >
-              Save
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {user?.role === "admin" && (
-        <Card className="max-w-2xl">
-          <CardHeader>
-            <CardTitle>Collaborators</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <PermissionsEditor permissions={permissions} onChange={setLocalPermissions} />
-            <Button
-              onClick={() => handleSavePermissions(permissions)}
-              disabled={busy || updateAppPermissions.isPending || !permissionsDirty}
-              className="self-start"
-            >
-              Save
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      <div>
-        <h2 className="mb-2 font-heading text-lg font-medium">Deployments</h2>
-        {deployments && deployments.length === 0 && (
-          <p className="text-muted-foreground">No deployments yet.</p>
-        )}
-        {deployments && deployments.length > 0 && (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Commit</TableHead>
-                {runConfig && <TableHead>Container</TableHead>}
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {deployments.map((deployment) => (
-                <Fragment key={deployment.id}>
+          <div className="flex flex-col gap-3">
+            <h2 className="border-b pb-2 font-heading text-lg font-medium">Deployments</h2>
+            {deployments && deployments.length === 0 && (
+              <p className="text-muted-foreground">No deployments yet.</p>
+            )}
+            {deployments && deployments.length > 0 && (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell className="font-mono text-xs">{deployment.id}</TableCell>
-                    <TableCell>{new Date(deployment.created_at).toLocaleString()}</TableCell>
-                    <TableCell>{formatBytes(deployment.upload_size_bytes)}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {deployment.git?.commit_sha ?? "—"}
-                    </TableCell>
-                    {runConfig && (
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">
-                            {deployment.container_status ?? "not started"}
-                          </Badge>
-                          {deployment.container_status === "running" && (
-                            <DeploymentStats appId={app.id} deploymentId={deployment.id} />
-                          )}
-                        </div>
-                      </TableCell>
-                    )}
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {deployment.status.state === "pending" && (
-                          <Badge variant="outline">deploying…</Badge>
-                        )}
-                        {deployment.status.state === "failed" && (
-                          <Badge variant="destructive" title={deployment.status.error}>
-                            failed
-                          </Badge>
-                        )}
-                        {deployment.is_active && <Badge>active</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        {(runConfig || (buildConfig && deployment.status.state !== "ready")) && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              setLogsFor(logsFor === deployment.id ? null : deployment.id)
-                            }
-                          >
-                            Logs
-                          </Button>
-                        )}
-                        {!deployment.is_active && deployment.status.state === "ready" && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={busy}
-                              onClick={() =>
-                                runAction(() => activateDeployment.mutateAsync(deployment.id))
-                              }
-                            >
-                              Activate
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={busy}
-                              onClick={() => {
-                                if (confirm("Delete this deployment?")) {
-                                  void runAction(() => deleteDeployment.mutateAsync(deployment.id));
-                                }
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </>
-                        )}
-                        {!deployment.is_active && deployment.status.state === "failed" && (
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            disabled={busy}
-                            onClick={() => {
-                              if (confirm("Delete this deployment?")) {
-                                void runAction(() => deleteDeployment.mutateAsync(deployment.id));
-                              }
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Size</TableHead>
+                    <TableHead>Commit</TableHead>
+                    {runConfig && <TableHead>Container</TableHead>}
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                  {logsFor === deployment.id && (
-                    <TableRow>
-                      <TableCell colSpan={runConfig ? 7 : 6}>
-                        <DeploymentLogs
-                          appId={app.id}
-                          deploymentId={deployment.id}
-                          source={app.source}
-                          onClose={() => setLogsFor(null)}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </div>
+                </TableHeader>
+                <TableBody>
+                  {deployments.map((deployment) => (
+                    <Fragment key={deployment.id}>
+                      <TableRow>
+                        <TableCell className="font-mono text-xs">{deployment.id}</TableCell>
+                        <TableCell>{new Date(deployment.created_at).toLocaleString()}</TableCell>
+                        <TableCell>{formatBytes(deployment.upload_size_bytes)}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {deployment.git?.commit_sha ?? "—"}
+                        </TableCell>
+                        {runConfig && (
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline">
+                                {deployment.container_status ?? "not started"}
+                              </Badge>
+                              {deployment.container_status === "running" && (
+                                <DeploymentStats appId={app.id} deploymentId={deployment.id} />
+                              )}
+                            </div>
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {deployment.status.state === "pending" && (
+                              <Badge variant="outline">deploying…</Badge>
+                            )}
+                            {deployment.status.state === "failed" && (
+                              <Badge variant="destructive" title={deployment.status.error}>
+                                failed
+                              </Badge>
+                            )}
+                            {deployment.is_active && <Badge>active</Badge>}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            {(runConfig ||
+                              (buildConfig && deployment.status.state !== "ready")) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  setLogsFor(logsFor === deployment.id ? null : deployment.id)
+                                }
+                              >
+                                Logs
+                              </Button>
+                            )}
+                            {!deployment.is_active && deployment.status.state === "ready" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={busy}
+                                  onClick={() =>
+                                    runAction(() => activateDeployment.mutateAsync(deployment.id))
+                                  }
+                                >
+                                  Activate
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (confirm("Delete this deployment?")) {
+                                      void runAction(() =>
+                                        deleteDeployment.mutateAsync(deployment.id),
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </>
+                            )}
+                            {!deployment.is_active && deployment.status.state === "failed" && (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={busy}
+                                onClick={() => {
+                                  if (confirm("Delete this deployment?")) {
+                                    void runAction(() =>
+                                      deleteDeployment.mutateAsync(deployment.id),
+                                    );
+                                  }
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {logsFor === deployment.id && (
+                        <TableRow>
+                          <TableCell colSpan={runConfig ? 7 : 6}>
+                            <DeploymentLogs
+                              appId={app.id}
+                              deploymentId={deployment.id}
+                              source={app.source}
+                              onClose={() => setLogsFor(null)}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="settings" className="flex flex-col gap-6">
+          <Section title="General">
+            <div className="flex flex-col gap-2">
+              <Label>App name</Label>
+              {renaming ? (
+                <form onSubmit={handleSubmitRename} className="flex items-center gap-2">
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    className="rounded border bg-background px-2 py-1 text-sm"
+                  />
+                  <Button type="submit" size="sm" disabled={renameApp.isPending}>
+                    Save
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRenaming(false)}
+                    disabled={renameApp.isPending}
+                  >
+                    Cancel
+                  </Button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{app.name}</span>
+                  <Button variant="outline" size="sm" onClick={handleStartRename}>
+                    Rename
+                  </Button>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {(runConfig || buildConfig) && (
+            <Section title="Environment variables">
+              <EnvVarEditor envVars={envVars} onChange={setLocalEnvVars} />
+              <Button
+                onClick={() => handleSaveEnvVars(envVars)}
+                disabled={busy || updateAppEnvVars.isPending || !envVarsDirty}
+                className="self-start"
+              >
+                Save
+              </Button>
+            </Section>
+          )}
+
+          {user?.role === "admin" && (
+            <Section title="Collaborators">
+              <PermissionsEditor permissions={permissions} onChange={setLocalPermissions} />
+              <Button
+                onClick={() => handleSavePermissions(permissions)}
+                disabled={busy || updateAppPermissions.isPending || !permissionsDirty}
+                className="self-start"
+              >
+                Save
+              </Button>
+            </Section>
+          )}
+
+          <Section title="Danger zone">
+            <Button
+              variant="destructive"
+              onClick={handleDeleteApp}
+              disabled={busy}
+              className="self-start"
+            >
+              Delete app
+            </Button>
+          </Section>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

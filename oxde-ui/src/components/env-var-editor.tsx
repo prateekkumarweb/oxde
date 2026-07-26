@@ -2,7 +2,6 @@ import type { EnvVar } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
 export function EnvVarEditor({
   envVars,
@@ -29,7 +28,6 @@ export function EnvVarEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <Label>Environment variables</Label>
       {envVars.map((envVar, index) => (
         <div key={index} className="flex gap-2">
           <Input

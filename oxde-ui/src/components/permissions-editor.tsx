@@ -2,7 +2,6 @@ import type { AppPermission, PermissionLevel } from "@/lib/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -38,7 +37,6 @@ export function PermissionsEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <Label>Collaborators</Label>
       {permissions.map((grant, index) => (
         <div key={index} className="flex gap-2">
           <Input
