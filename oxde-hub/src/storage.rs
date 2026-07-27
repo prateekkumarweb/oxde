@@ -976,6 +976,7 @@ mod tests {
         update_app,
     };
     use crate::{
+        agent_link::AgentLink,
         error::AppError,
         state::{AppState, AppStateLimits},
     };
@@ -1020,6 +1021,7 @@ mod tests {
             .expect("build docker client"),
             crate::reverse_proxy::new_client(),
             db,
+            AgentLink::new(),
         )
     }
 

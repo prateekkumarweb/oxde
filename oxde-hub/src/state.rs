@@ -1,6 +1,6 @@
 use std::{
     net::IpAddr,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -12,7 +12,10 @@ use bollard::Docker;
 use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
-use crate::{auth::LoginAttempts, deployment_logs::LogRegistry, reverse_proxy::ProxyClient};
+use crate::{
+    agent_link::AgentLink, auth::LoginAttempts, deployment_logs::LogRegistry,
+    reverse_proxy::ProxyClient,
+};
 
 /// How long a resolved container IP is trusted before `container_ip` is
 /// asked again - bounds how long routing can stay wrong after a container
@@ -31,6 +34,7 @@ impl AppState {
         docker: Docker,
         proxy_client: ProxyClient,
         db: toasty::Db,
+        agent_link: AgentLink,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -52,8 +56,13 @@ impl AppState {
                 sessions: ConcurrentHashMap::new(),
                 login_attempts: ConcurrentHashMap::new(),
                 log_registry: LogRegistry::new(),
+                agent_link,
             }),
         }
+    }
+
+    pub fn agent_link(&self) -> &AgentLink {
+        &self.inner.agent_link
     }
 
     pub fn log_registry(&self) -> &LogRegistry {
@@ -135,10 +144,6 @@ impl AppState {
         self.inner.enable_mcp
     }
 
-    pub fn data_dir(&self) -> &Path {
-        &self.inner.data_dir
-    }
-
     pub fn apps_dir(&self) -> PathBuf {
         self.inner.data_dir.join("apps")
     }
@@ -204,6 +209,7 @@ struct Inner {
     sessions: ConcurrentHashMap<String, crate::auth::Session>,
     login_attempts: ConcurrentHashMap<IpAddr, LoginAttempts>,
     log_registry: LogRegistry,
+    agent_link: AgentLink,
 }
 
 /// Scalar config `AppState::new` bundles a plain constructor's worth of

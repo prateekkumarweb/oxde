@@ -62,7 +62,7 @@ async fn host_stats_endpoint(
     current_user: ApiUser,
 ) -> AppResult<Json<HostStats>> {
     current_user.require_admin()?;
-    let host_stats = host_stats::collect(state.data_dir()).await?;
+    let host_stats = host_stats::collect(state.agent_link()).await?;
     Ok(Json(host_stats))
 }
 

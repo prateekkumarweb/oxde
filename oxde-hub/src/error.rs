@@ -67,6 +67,12 @@ pub enum AppError {
     CommandFailed(String),
     #[error("deployment {0} has no container")]
     NoContainer(String),
+    #[error("no agent is currently connected")]
+    AgentUnavailable,
+    #[error("agent did not respond in time")]
+    AgentTimeout,
+    #[error("agent error: {0}")]
+    AgentError(String),
     #[error("upload too large")]
     TooLarge,
     #[error("missing 'file' field in upload")]
@@ -137,9 +143,11 @@ impl IntoResponse for AppError {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::TooManyLoginAttempts(_) => StatusCode::TOO_MANY_REQUESTS,
-            Self::ContainerStartFailed(_) | Self::ContainerUnavailable(_) => {
-                StatusCode::BAD_GATEWAY
-            }
+            Self::ContainerStartFailed(_)
+            | Self::ContainerUnavailable(_)
+            | Self::AgentUnavailable
+            | Self::AgentTimeout
+            | Self::AgentError(_) => StatusCode::BAD_GATEWAY,
             Self::Zip(_)
             | Self::Multipart(_)
             | Self::Io(_)

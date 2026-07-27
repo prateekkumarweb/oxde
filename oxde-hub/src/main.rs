@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod accounts;
+mod agent_link;
 mod api_tokens;
 mod auth;
 mod authz;
@@ -80,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
         docker,
         reverse_proxy::new_client(),
         db,
+        agent_link::AgentLink::new(),
     );
 
     bootstrap_admin(&state, &config.admin_username, &config.admin_password)
@@ -99,8 +101,9 @@ async fn main() -> anyhow::Result<()> {
     reconcile_run_mode_containers(&state).await;
     auth::spawn_login_attempts_sweeper(state.clone());
 
-    tokio::spawn(async {
-        if let Err(err) = grpc::serve().await {
+    let agent_link = state.agent_link().clone();
+    tokio::spawn(async move {
+        if let Err(err) = grpc::serve(agent_link).await {
             tracing::error!(error = ?err, "hub gRPC listener stopped");
         }
     });

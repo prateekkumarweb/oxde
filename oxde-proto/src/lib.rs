@@ -11,13 +11,16 @@ pub mod hub {
 
 #[cfg(test)]
 mod tests {
+    use std::pin::Pin;
+
     use tonic::{
-        Request, Response, Status,
+        Request, Response, Status, Streaming,
+        codegen::tokio_stream::Stream,
         transport::{Server, server::TcpIncoming},
     };
 
     use super::hub::v1::{
-        PingRequest, PingResponse,
+        PingRequest, PingResponse, SessionRequest, SessionResponse,
         hub_service_client::HubServiceClient,
         hub_service_server::{HubService, HubServiceServer},
     };
@@ -33,6 +36,15 @@ mod tests {
             Ok(Response::new(PingResponse {
                 version: "test".to_string(),
             }))
+        }
+
+        type SessionStream = Pin<Box<dyn Stream<Item = Result<SessionResponse, Status>> + Send>>;
+
+        async fn session(
+            &self,
+            _request: Request<Streaming<SessionRequest>>,
+        ) -> Result<Response<Self::SessionStream>, Status> {
+            Err(Status::unimplemented("not exercised by this test"))
         }
     }
 

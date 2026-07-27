@@ -5,7 +5,9 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 oxde-proto.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+sysinfo.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+tokio-stream.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
 tracing.workspace = true
