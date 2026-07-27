@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("OXDE_AGENT_DATA_DIR").unwrap_or_else(|_| "agent-data".to_string()),
     );
     std::fs::create_dir_all(&data_dir)?;
+    let data_dir = data_dir.canonicalize()?;
 
     let hub_addr = format!("http://127.0.0.1:{AGENT_GRPC_PORT}");
     tracing::info!(hub_addr, "dialing hub");

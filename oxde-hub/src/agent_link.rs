@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Single-agent for now - `set_outbound` replaces whatever was there before,
-/// matching Milestone A's one-host scope. Cloneable, shared via `AppState`.
+/// Cloneable, shared via `AppState`.
 #[derive(Clone)]
 pub struct AgentLink {
     inner: Arc<Inner>,

@@ -585,7 +585,9 @@ mod live_tests {
         ensure_network(&docker).await.expect("ensure_network");
         let checkout = temp_checkout("install-fail");
         let name = "oxde-live-test-install-fail";
+        let install_name = install_container_name(name);
         stop_and_remove(&docker, name).await.ok();
+        stop_and_remove(&docker, &install_name).await.ok();
 
         let config = RunConfig {
             image: RunImage::Node24,
@@ -606,6 +608,7 @@ mod live_tests {
         assert!(result.is_err());
         assert!(!is_running(&docker, name).await.expect("is_running"));
         std::fs::remove_dir_all(&checkout).ok();
+        stop_and_remove(&docker, &install_name).await.ok();
     }
 
     #[tokio::test]
@@ -614,7 +617,9 @@ mod live_tests {
         ensure_network(&docker).await.expect("ensure_network");
         let checkout = temp_checkout("install-timeout");
         let name = "oxde-live-test-install-timeout";
+        let install_name = install_container_name(name);
         stop_and_remove(&docker, name).await.ok();
+        stop_and_remove(&docker, &install_name).await.ok();
 
         let config = RunConfig {
             image: RunImage::Node24,
@@ -635,5 +640,6 @@ mod live_tests {
         assert!(matches!(result, Err(AppError::CommandFailed(_))));
         assert!(!is_running(&docker, name).await.expect("is_running"));
         std::fs::remove_dir_all(&checkout).ok();
+        stop_and_remove(&docker, &install_name).await.ok();
     }
 }
