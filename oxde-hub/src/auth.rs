@@ -396,13 +396,6 @@ mod tests {
                 api_token_max_expiry_days: 30,
                 enable_mcp: false,
             },
-            // These tests never touch containers - just needs to construct.
-            bollard::Docker::connect_with_http(
-                "http://localhost:0",
-                5,
-                bollard::API_DEFAULT_VERSION,
-            )
-            .expect("construct unused docker client"),
             crate::reverse_proxy::new_client(),
             db,
             AgentLink::new(),

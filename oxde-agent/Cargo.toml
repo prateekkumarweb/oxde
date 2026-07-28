@@ -4,9 +4,14 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+bollard.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+oxde-models.workspace = true
 oxde-proto.workspace = true
+serde_json.workspace = true
 sysinfo.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-stream.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true

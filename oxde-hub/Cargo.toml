@@ -11,7 +11,6 @@ argon2.workspace = true
 axum = { workspace = true, features = ["multipart"] }
 axum-server = { workspace = true, features = ["tls-rustls"] }
 base64.workspace = true
-bollard.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
 gix = { workspace = true, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }

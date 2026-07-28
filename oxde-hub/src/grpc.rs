@@ -58,3 +58,175 @@ pub async fn serve(agent_link: AgentLink) -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use oxde_proto::hub::v1::{
+        Chunk, EchoStreamRequest, EchoUploadResult, hub_service_client::HubServiceClient,
+        session_request, session_response,
+    };
+    use tokio::sync::{mpsc, oneshot};
+    use tonic::transport::server::TcpIncoming;
+
+    use super::*;
+
+    /// Starts a real hub gRPC server on an ephemeral port over its own
+    /// fresh `AgentLink`, returning that link (for the test to drive as the
+    /// hub side) and the address to dial (for a fake agent to connect to).
+    fn spawn_test_hub() -> (AgentLink, String) {
+        let agent_link = AgentLink::new();
+        let incoming = TcpIncoming::bind("127.0.0.1:0".parse().expect("addr")).expect("bind");
+        let addr = incoming.local_addr().expect("local_addr");
+
+        let server_link = agent_link.clone();
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(HubServiceServer::new(Hub {
+                    agent_link: server_link,
+                }))
+                .serve_with_incoming(incoming)
+                .await
+                .expect("serve");
+        });
+
+        (agent_link, format!("http://{addr}"))
+    }
+
+    /// Proves `call_chunked`'s "hub sends N, agent replies once" half: a
+    /// fake agent accumulates `EchoUpload` chunks until one is marked
+    /// final, then replies with the total byte count received.
+    #[tokio::test]
+    async fn call_chunked_delivers_every_chunk_before_the_single_reply() {
+        let (agent_link, hub_addr) = spawn_test_hub();
+        let (ready_tx, ready_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let mut client = HubServiceClient::connect(hub_addr).await.expect("connect");
+            let (tx, rx) = mpsc::channel(16);
+            let mut inbound = client
+                .session(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .await
+                .expect("open session")
+                .into_inner();
+            let _ = ready_tx.send(());
+
+            let mut received = Vec::new();
+            while let Some(message) = inbound.message().await.expect("recv") {
+                let Some(session_response::Payload::EchoUpload(chunk)) = message.payload else {
+                    panic!("expected an EchoUpload chunk");
+                };
+                received.extend_from_slice(&chunk.data);
+                if chunk.is_final {
+                    tx.send(SessionRequest {
+                        request_id: message.request_id,
+                        payload: Some(session_request::Payload::EchoUploadResult(
+                            EchoUploadResult {
+                                bytes_received: received.len() as u64,
+                            },
+                        )),
+                    })
+                    .await
+                    .expect("send reply");
+                    // Keeps `tx`/`client` alive rather than dropping them
+                    // (which would cancel the request stream) right after
+                    // the send call returns - `send` completing only means
+                    // the reply was queued, not that it's been flushed to
+                    // the wire yet.
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.expect("fake agent ready");
+
+        let result = agent_link
+            .call_chunked(vec![
+                session_response::Payload::EchoUpload(Chunk {
+                    data: b"hello ".to_vec(),
+                    is_final: false,
+                }),
+                session_response::Payload::EchoUpload(Chunk {
+                    data: b"world".to_vec(),
+                    is_final: true,
+                }),
+            ])
+            .await
+            .expect("call_chunked");
+
+        let session_request::Payload::EchoUploadResult(result) = result else {
+            panic!("expected an EchoUploadResult");
+        };
+        assert_eq!(result.bytes_received, "hello world".len() as u64);
+    }
+
+    /// Proves `call_streaming_reply`'s "hub sends one, agent replies with
+    /// N" half: a fake agent answers a single `EchoStreamRequest` with a
+    /// run of `EchoStreamChunk` replies, the last marked final.
+    #[tokio::test]
+    async fn call_streaming_reply_delivers_every_chunk_the_agent_sends() {
+        let (agent_link, hub_addr) = spawn_test_hub();
+        let (ready_tx, ready_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let mut client = HubServiceClient::connect(hub_addr).await.expect("connect");
+            let (tx, rx) = mpsc::channel(16);
+            let mut inbound = client
+                .session(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .await
+                .expect("open session")
+                .into_inner();
+            let _ = ready_tx.send(());
+
+            let message = inbound
+                .message()
+                .await
+                .expect("recv")
+                .expect("some message");
+            let Some(session_response::Payload::EchoStreamRequest(request)) = message.payload
+            else {
+                panic!("expected an EchoStreamRequest");
+            };
+            for i in 0..request.chunk_count {
+                tx.send(SessionRequest {
+                    request_id: message.request_id,
+                    payload: Some(session_request::Payload::EchoStreamChunk(Chunk {
+                        data: vec![u8::try_from(i).expect("chunk_count fits in a byte")],
+                        is_final: i + 1 == request.chunk_count,
+                    })),
+                })
+                .await
+                .expect("send chunk");
+            }
+            // See the matching comment in the `call_chunked` test above -
+            // dropping `tx`/`client` immediately after the last send would
+            // race the send actually reaching the wire.
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.expect("fake agent ready");
+
+        let (request_id, mut rx) = agent_link
+            .call_streaming_reply(session_response::Payload::EchoStreamRequest(
+                EchoStreamRequest { chunk_count: 3 },
+            ))
+            .await
+            .expect("call_streaming_reply");
+
+        let mut received = Vec::new();
+        loop {
+            let payload = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("no timeout")
+                .expect("channel open");
+            let session_request::Payload::EchoStreamChunk(chunk) = payload else {
+                panic!("expected an EchoStreamChunk");
+            };
+            received.push(chunk.data[0]);
+            if chunk.is_final {
+                break;
+            }
+        }
+        agent_link.end_stream(request_id).await;
+
+        assert_eq!(received, vec![0, 1, 2]);
+    }
+}

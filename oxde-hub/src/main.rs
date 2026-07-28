@@ -43,7 +43,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::load().context("failed to load configuration")?;
-    let docker = containers::connect().context("failed to build Podman client")?;
 
     // Must be absolute: it's used as a bind-mount source for run-mode
     // containers, which Podman resolves against its own process, not
@@ -78,7 +77,6 @@ async fn main() -> anyhow::Result<()> {
             api_token_max_expiry_days: config.api_token_max_expiry_days,
             enable_mcp: config.enable_mcp,
         },
-        docker,
         reverse_proxy::new_client(),
         db,
         agent_link::AgentLink::new(),
@@ -94,9 +92,6 @@ async fn main() -> anyhow::Result<()> {
     storage::sweep_orphaned_dirs(&state)
         .await
         .context("failed to sweep orphaned app/deployment directories on startup")?;
-    containers::ensure_network(state.docker())
-        .await
-        .context("failed to ensure the run-mode container network exists")?;
     fail_pending_deployments(&state).await;
     reconcile_run_mode_containers(&state).await;
     auth::spawn_login_attempts_sweeper(state.clone());
@@ -226,16 +221,16 @@ async fn fail_pending_deployments(state: &AppState) {
                 "marking deployment interrupted by server restart as failed"
             );
 
-            if let Some(container_name) = &deployment.container_name {
-                let install_name = containers::install_container_name(container_name);
-                if let Err(err) = containers::stop_and_remove(state.docker(), &install_name).await {
-                    tracing::error!(
-                        error = %err,
-                        app = app.name,
-                        deployment = deployment.id,
-                        "failed to remove install container during reconciliation"
-                    );
-                }
+            if let Some(container_name) = &deployment.container_name
+                && let Err(err) =
+                    containers::stop_and_remove(state.agent_link(), container_name, true).await
+            {
+                tracing::error!(
+                    error = %err,
+                    app = app.name,
+                    deployment = deployment.id,
+                    "failed to remove install container during reconciliation"
+                );
             }
 
             if let Err(err) = storage::fail_git_deployment(
@@ -298,7 +293,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     let checkout_dir = state.deployment_files_dir(&app.id, &deployment_id);
     tracing::info!(app = app.name, "starting run-mode container on startup");
     containers::start(
-        state.docker(),
+        state.agent_link(),
         container_name,
         &checkout_dir,
         run_config,
@@ -311,7 +306,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     // Container survives our restart, but nothing was capturing its logs
     // while we were down - resume, or run.log stays stale until redeploy.
     containers::spawn_run_log_pump(
-        state.docker(),
+        state.agent_link(),
         container_name,
         deployment_logs::LogTarget {
             path: state.deployment_log_path(&app.id, &deployment_id, deployment_logs::LogKind::Run),

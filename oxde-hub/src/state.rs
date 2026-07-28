@@ -8,7 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bollard::Docker;
 use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
@@ -31,7 +30,6 @@ impl AppState {
     pub fn new(
         data_dir: PathBuf,
         limits: AppStateLimits,
-        docker: Docker,
         proxy_client: ProxyClient,
         db: toasty::Db,
         agent_link: AgentLink,
@@ -49,7 +47,6 @@ impl AppState {
                 build_timeout_secs: limits.build_timeout_secs,
                 api_token_max_expiry_days: limits.api_token_max_expiry_days,
                 enable_mcp: limits.enable_mcp,
-                docker,
                 proxy_client,
                 container_ips: ConcurrentHashMap::new(),
                 db,
@@ -79,10 +76,6 @@ impl AppState {
 
     pub fn login_attempts(&self) -> &ConcurrentHashMap<IpAddr, LoginAttempts> {
         &self.inner.login_attempts
-    }
-
-    pub fn docker(&self) -> &Docker {
-        &self.inner.docker
     }
 
     pub fn proxy_client(&self) -> &ProxyClient {
@@ -202,7 +195,6 @@ struct Inner {
     build_timeout_secs: u64,
     api_token_max_expiry_days: i64,
     enable_mcp: bool,
-    docker: Docker,
     proxy_client: ProxyClient,
     container_ips: ConcurrentHashMap<String, (String, Instant)>,
     db: toasty::Db,

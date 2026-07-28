@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::{Stream, StreamExt};
+use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use ts_rs::TS;
@@ -106,56 +106,77 @@ pub struct LogTarget {
     pub registry: LogRegistry,
 }
 
-/// Drains `source` into `target`'s file and broadcast channel until `source`
-/// ends, then deregisters. A no-op if a pump is already registered for this
-/// deployment. A write failure only drops persistence for that chunk (not
-/// the live broadcast) - a watching client shouldn't lose output over a
-/// transient disk error.
-pub async fn run_pump(target: LogTarget, mut source: impl Stream<Item = AppResult<Bytes>> + Unpin) {
-    let Some(tx) = target
-        .registry
-        .try_register(&target.deployment_id, target.kind)
-    else {
-        return;
-    };
+/// Write-to-file-and-broadcast, factored out of `run_pump` so a
+/// chunk-by-chunk source (an agent RPC's streamed reply) can drive it
+/// without wrapping as a `Stream`. `try_new` returns `None` if a pump is
+/// already registered - not an error, just "don't start a second one".
+/// Deregisters on drop.
+pub struct LogPump {
+    target: LogTarget,
+    tx: broadcast::Sender<Bytes>,
+    file: Option<std::fs::File>,
+    bytes_written: u64,
+}
 
-    let mut file = match open_for_kind(target.kind, &target.path) {
-        Ok(file) => Some(file),
-        Err(err) => {
-            tracing::warn!(error = %err, path = %target.path.display(), "failed to open log file");
-            None
-        }
-    };
-    let mut bytes_written = file
-        .as_ref()
-        .and_then(|file| file.metadata().ok())
-        .map_or(0, |metadata| metadata.len());
+impl LogPump {
+    pub fn try_new(target: LogTarget) -> Option<Self> {
+        let tx = target
+            .registry
+            .try_register(&target.deployment_id, target.kind)?;
 
-    while let Some(chunk) = source.next().await {
-        let Ok(chunk) = chunk else { break };
+        let file = match open_for_kind(target.kind, &target.path) {
+            Ok(file) => Some(file),
+            Err(err) => {
+                tracing::warn!(error = %err, path = %target.path.display(), "failed to open log file");
+                None
+            }
+        };
+        let bytes_written = file
+            .as_ref()
+            .and_then(|file| file.metadata().ok())
+            .map_or(0, |metadata| metadata.len());
 
-        if file.is_some() && target.kind == LogKind::Run && bytes_written >= RUN_LOG_ROTATE_BYTES {
-            file = rotate_and_reopen(&target.path)
+        Some(Self {
+            target,
+            tx,
+            file,
+            bytes_written,
+        })
+    }
+
+    /// A write failure only drops persistence for this chunk (not the live
+    /// broadcast) - a watching client shouldn't lose output over a
+    /// transient disk error.
+    pub fn push(&mut self, chunk: Bytes) {
+        if self.file.is_some()
+            && self.target.kind == LogKind::Run
+            && self.bytes_written >= RUN_LOG_ROTATE_BYTES
+        {
+            self.file = rotate_and_reopen(&self.target.path)
                 .inspect_err(|err| {
-                    tracing::warn!(error = %err, path = %target.path.display(), "failed to rotate run.log");
+                    tracing::warn!(error = %err, path = %self.target.path.display(), "failed to rotate run.log");
                 })
                 .ok();
-            bytes_written = 0;
+            self.bytes_written = 0;
         }
 
-        if let Some(current) = &mut file {
+        if let Some(current) = &mut self.file {
             match current.write_all(&chunk) {
-                Ok(()) => bytes_written += chunk.len() as u64,
+                Ok(()) => self.bytes_written += chunk.len() as u64,
                 Err(err) => {
-                    tracing::warn!(error = %err, path = %target.path.display(), "failed to persist log chunk");
+                    tracing::warn!(error = %err, path = %self.target.path.display(), "failed to persist log chunk");
                 }
             }
         }
 
-        let _ = tx.send(chunk); // Err just means no live subscribers right now.
+        let _ = self.tx.send(chunk); // Err just means no live subscribers right now.
     }
+}
 
-    target.registry.deregister(&target.deployment_id);
+impl Drop for LogPump {
+    fn drop(&mut self) {
+        self.target.registry.deregister(&self.target.deployment_id);
+    }
 }
 
 fn open_for_kind(kind: LogKind, path: &Path) -> AppResult<std::fs::File> {
@@ -239,12 +260,8 @@ mod tests {
         dir
     }
 
-    fn chunk_stream(chunks: Vec<Bytes>) -> impl Stream<Item = AppResult<Bytes>> + Unpin {
-        futures_util::stream::iter(chunks.into_iter().map(Ok))
-    }
-
-    #[tokio::test]
-    async fn pump_writes_chunks_and_deregisters_on_stream_end() {
+    #[test]
+    fn pump_writes_chunks_and_deregisters_on_drop() {
         let dir = tempdir("basic");
         let registry = LogRegistry::new();
         let target = LogTarget {
@@ -253,14 +270,10 @@ mod tests {
             kind: LogKind::Install,
             registry: registry.clone(),
         };
-        run_pump(
-            target,
-            chunk_stream(vec![
-                Bytes::from_static(b"hello "),
-                Bytes::from_static(b"world"),
-            ]),
-        )
-        .await;
+        let mut pump = LogPump::try_new(target).expect("try_new");
+        pump.push(Bytes::from_static(b"hello "));
+        pump.push(Bytes::from_static(b"world"));
+        drop(pump);
 
         assert_eq!(
             std::fs::read(dir.join("install.log")).unwrap(),
@@ -269,8 +282,8 @@ mod tests {
         assert!(registry.active("dep1").is_none());
     }
 
-    #[tokio::test]
-    async fn second_pump_for_same_deployment_is_a_no_op() {
+    #[test]
+    fn second_pump_for_same_deployment_is_a_no_op() {
         let dir = tempdir("dup");
         let registry = LogRegistry::new();
         let tx = registry
@@ -283,17 +296,17 @@ mod tests {
             kind: LogKind::Install,
             registry: registry.clone(),
         };
-        run_pump(target, chunk_stream(vec![Bytes::from_static(b"ignored")])).await;
+        assert!(LogPump::try_new(target).is_none());
 
-        // The second pump returned immediately without touching the file.
+        // The second pump never got created, so nothing touched the file.
         assert!(std::fs::read(dir.join("install.log")).is_err());
         // The first (still-registered) pump is untouched.
         assert!(registry.active("dep1").is_some());
         drop(tx);
     }
 
-    #[tokio::test]
-    async fn run_log_rotates_at_cap() {
+    #[test]
+    fn run_log_rotates_at_cap() {
         let dir = tempdir("rotate");
         let registry = LogRegistry::new();
         let target = LogTarget {
@@ -303,13 +316,14 @@ mod tests {
             registry,
         };
 
-        let first = Bytes::from(vec![
+        let mut pump = LogPump::try_new(target).expect("try_new");
+        pump.push(Bytes::from(vec![
             b'a';
             usize::try_from(RUN_LOG_ROTATE_BYTES)
                 .expect("fits in usize")
-        ]);
-        let second = Bytes::from_static(b"after-rotation");
-        run_pump(target, chunk_stream(vec![first, second])).await;
+        ]));
+        pump.push(Bytes::from_static(b"after-rotation"));
+        drop(pump);
 
         assert_eq!(
             std::fs::read(dir.join("run.log.1")).unwrap().len(),

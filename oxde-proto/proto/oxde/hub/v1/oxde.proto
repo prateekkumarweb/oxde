@@ -18,6 +18,15 @@ message SessionRequest {
 
   oneof payload {
     HostStatsResult host_stats_result = 2;
+    EchoUploadResult echo_upload_result = 3;
+    Chunk echo_stream_chunk = 4;
+    CommandOutput start_run_container_result = 5;
+    CommandOutput run_build_command_result = 6;
+    CommandResult stop_and_remove_container_result = 7;
+    IsContainerRunningResult is_container_running_result = 8;
+    ContainerStatsResult container_stats_result = 9;
+    GetContainerIpResult get_container_ip_result = 10;
+    Chunk stream_container_logs_chunk = 11;
   }
 }
 
@@ -26,10 +35,32 @@ message SessionResponse {
 
   oneof payload {
     GetHostStatsRequest get_host_stats = 2;
+    Chunk echo_upload = 3;
+    EchoStreamRequest echo_stream_request = 4;
+    StartRunContainerRequest start_run_container = 5;
+    RunBuildCommandRequest run_build_command = 6;
+    StopAndRemoveContainerRequest stop_and_remove_container = 7;
+    IsContainerRunningRequest is_container_running = 8;
+    ContainerStatsRequest container_stats = 9;
+    GetContainerIpRequest get_container_ip = 10;
+    StreamContainerLogsRequest stream_container_logs = 11;
   }
 }
 
 message GetHostStatsRequest {}
+
+message Chunk {
+  bytes data = 1;
+  bool is_final = 2;
+}
+
+message EchoUploadResult {
+  uint64 bytes_received = 1;
+}
+
+message EchoStreamRequest {
+  uint32 chunk_count = 1;
+}
 
 message HostStatsResult {
   oneof result {
@@ -45,4 +76,102 @@ message HostStats {
   uint64 memory_total_bytes = 4;
   uint64 disk_usage_bytes = 5;
   uint64 disk_total_bytes = 6;
+}
+
+message Empty {}
+
+enum AgentErrorKind {
+  AGENT_ERROR_KIND_UNSPECIFIED = 0;
+  AGENT_ERROR_KIND_UNAVAILABLE = 1;
+  AGENT_ERROR_KIND_START_FAILED = 2;
+  AGENT_ERROR_KIND_COMMAND_FAILED = 3;
+}
+
+message AgentError {
+  AgentErrorKind kind = 1;
+  string message = 2;
+}
+
+message CommandResult {
+  oneof result {
+    Empty ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message CommandOutput {
+  oneof output {
+    Chunk log = 1;
+    CommandResult result = 2;
+  }
+}
+
+message StartRunContainerRequest {
+  string container_name = 1;
+  string deployment_files_dir = 2;
+  string run_config_json = 3;
+  string env_vars_json = 4;
+  uint64 install_timeout_secs = 5;
+}
+
+message RunBuildCommandRequest {
+  string container_name = 1;
+  string checkout_dir = 2;
+  string image = 3;
+  string command = 4;
+  string env_vars_json = 5;
+  uint64 timeout_secs = 6;
+}
+
+message StopAndRemoveContainerRequest {
+  string container_name = 1;
+  bool is_install = 2;
+}
+
+message IsContainerRunningRequest {
+  string container_name = 1;
+}
+
+message IsContainerRunningResult {
+  oneof result {
+    bool ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message ContainerStatsRequest {
+  string container_name = 1;
+}
+
+message ContainerStatsResult {
+  oneof result {
+    ContainerStats ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message ContainerStats {
+  double cpu_percent = 1;
+  uint64 memory_usage_bytes = 2;
+  uint64 memory_limit_bytes = 3;
+}
+
+message GetContainerIpRequest {
+  string container_name = 1;
+}
+
+message GetContainerIpResult {
+  oneof result {
+    ContainerIp ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message ContainerIp {
+  optional string ip = 1;
+}
+
+message StreamContainerLogsRequest {
+  string container_name = 1;
+  bool follow = 2;
 }

@@ -3786,7 +3786,12 @@ name = "oxde-agent"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bollard",
+ "bytes",
+ "futures-util",
+ "oxde-models",
  "oxde-proto",
+ "serde_json",
  "sysinfo",
  "tokio",
  "tokio-stream",
@@ -3816,7 +3821,6 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.23.0",
- "bollard",
  "bytes",
  "futures-util",
  "gix",
