@@ -141,6 +141,60 @@ async fn sweep_orphaned_deployment_dirs(
     Ok(removed)
 }
 
+/// The agent-content counterpart to `sweep_orphaned_dirs`, run
+/// independently since the hub's own (log-only) tree and the agent's
+/// (run-mode `files/`) tree are swept separately. Best-effort, not
+/// propagated as a startup failure the way `sweep_orphaned_dirs` is - the
+/// agent may not be connected yet at hub startup, and that isn't fatal.
+pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
+    let agent_deployment_ids = match crate::agent_fs::list_deployment_dirs(state.agent_link()).await
+    {
+        Ok(ids) => ids,
+        Err(err) => {
+            tracing::warn!(error = %err, "skipping agent orphan sweep - could not list agent deployment dirs");
+            return;
+        }
+    };
+    if agent_deployment_ids.is_empty() {
+        return;
+    }
+
+    let mut db = state.db().clone();
+    let valid_deployment_ids: HashSet<Uuid> = match DbDeployment::all().exec(&mut db).await {
+        Ok(rows) => rows
+            .into_iter()
+            .filter(|row| row.container_name.is_some())
+            .map(|row| row.id)
+            .collect(),
+        Err(err) => {
+            tracing::warn!(error = ?err, "skipping agent orphan sweep - could not list deployments");
+            return;
+        }
+    };
+
+    let mut removed = 0u32;
+    for deployment_id in agent_deployment_ids {
+        let Ok(id) = Uuid::parse_str(&deployment_id) else {
+            continue;
+        };
+        if valid_deployment_ids.contains(&id) {
+            continue;
+        }
+        tracing::warn!(
+            deployment_id = %id,
+            "removing orphaned agent-side deployment directory with no matching run-mode Deployment row"
+        );
+        if let Err(err) =
+            crate::agent_fs::delete_deployment_dir(state.agent_link(), &deployment_id).await
+        {
+            tracing::error!(error = %err, deployment_id = %id, "failed to remove orphaned agent-side deployment directory");
+            continue;
+        }
+        removed += 1;
+    }
+    tracing::info!(removed, "agent orphan sweep complete");
+}
+
 async fn find_app_row(db: &mut Db, name: &str) -> AppResult<DbApp> {
     DbApp::all()
         .filter(DbApp::fields().name().eq(name))
@@ -798,6 +852,40 @@ pub async fn finish_git_deployment(
 
     std::fs::remove_dir_all(staging).ok();
     Ok(())
+}
+
+/// Ships a run-mode deployment's already-resolved `files/` to the agent so
+/// its container has something to bind-mount - zips the hub's local copy
+/// (reusing the same wire format a browser upload already needs) rather
+/// than inventing a second one. Static and build-mode deployments never
+/// call this; their content stays hub-side and is served directly.
+pub async fn ship_run_deployment_to_agent(
+    state: &AppState,
+    app_id: &str,
+    deployment_id: &str,
+) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let app_row = find_app_row_by_id(&mut db, app_id).await?;
+    let files_dir = state.deployment_files_dir(&app_row.id.to_string(), deployment_id);
+
+    let zip_path = state.unique_tmp_path("ship-to-agent").with_extension("zip");
+    crate::agent_fs::zip_dir(&files_dir, &zip_path)?;
+
+    let result = async {
+        crate::agent_fs::create_deployment_dir(state.agent_link(), deployment_id).await?;
+        crate::agent_fs::upload_zip_and_extract(
+            state.agent_link(),
+            deployment_id,
+            &zip_path,
+            state.max_uncompressed_bytes(),
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
+
+    remove_file_logged(&zip_path).await;
+    result
 }
 
 pub async fn mark_git_deployment_ready(

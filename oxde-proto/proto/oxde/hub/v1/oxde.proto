@@ -27,6 +27,10 @@ message SessionRequest {
     ContainerStatsResult container_stats_result = 9;
     GetContainerIpResult get_container_ip_result = 10;
     Chunk stream_container_logs_chunk = 11;
+    CommandResult create_deployment_dir_result = 12;
+    CommandResult delete_deployment_dir_result = 13;
+    ListDeploymentDirsResult list_deployment_dirs_result = 14;
+    UploadZipAndExtractResult upload_zip_and_extract_result = 15;
   }
 }
 
@@ -44,6 +48,10 @@ message SessionResponse {
     ContainerStatsRequest container_stats = 9;
     GetContainerIpRequest get_container_ip = 10;
     StreamContainerLogsRequest stream_container_logs = 11;
+    CreateDeploymentDirRequest create_deployment_dir = 12;
+    DeleteDeploymentDirRequest delete_deployment_dir = 13;
+    ListDeploymentDirsRequest list_deployment_dirs = 14;
+    UploadZipAndExtractRequest upload_zip_and_extract = 15;
   }
 }
 
@@ -107,8 +115,8 @@ message CommandOutput {
 }
 
 message StartRunContainerRequest {
-  string container_name = 1;
-  string deployment_files_dir = 2;
+  string deployment_id = 1;
+  string container_name = 2;
   string run_config_json = 3;
   string env_vars_json = 4;
   uint64 install_timeout_secs = 5;
@@ -174,4 +182,38 @@ message ContainerIp {
 message StreamContainerLogsRequest {
   string container_name = 1;
   bool follow = 2;
+}
+
+message CreateDeploymentDirRequest {
+  string deployment_id = 1;
+}
+
+message DeleteDeploymentDirRequest {
+  string deployment_id = 1;
+}
+
+message ListDeploymentDirsRequest {}
+
+message ListDeploymentDirsResult {
+  oneof result {
+    DeploymentIdList ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message DeploymentIdList {
+  repeated string deployment_ids = 1;
+}
+
+message UploadZipAndExtractRequest {
+  string deployment_id = 1;
+  uint64 max_uncompressed_bytes = 2;
+  Chunk chunk = 3;
+}
+
+message UploadZipAndExtractResult {
+  oneof result {
+    uint64 content_size_bytes = 1;
+    AgentError error = 2;
+  }
 }

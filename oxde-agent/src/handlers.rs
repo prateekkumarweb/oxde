@@ -6,15 +6,21 @@ use futures_util::StreamExt;
 use oxde_models::{EnvVar, RunConfig};
 use oxde_proto::hub::v1::{
     AgentError, AgentErrorKind, Chunk, CommandOutput, CommandResult, ContainerIp,
-    ContainerStats as ProtoContainerStats, ContainerStatsRequest, ContainerStatsResult, Empty,
-    GetContainerIpRequest, GetContainerIpResult, IsContainerRunningRequest,
-    IsContainerRunningResult, RunBuildCommandRequest, SessionRequest, StartRunContainerRequest,
-    StopAndRemoveContainerRequest, StreamContainerLogsRequest, command_output, command_result,
-    container_stats_result, get_container_ip_result, is_container_running_result, session_request,
+    ContainerStats as ProtoContainerStats, ContainerStatsRequest, ContainerStatsResult,
+    DeploymentIdList, Empty, GetContainerIpRequest, GetContainerIpResult,
+    IsContainerRunningRequest, IsContainerRunningResult, ListDeploymentDirsResult,
+    RunBuildCommandRequest, SessionRequest, StartRunContainerRequest,
+    StopAndRemoveContainerRequest, StreamContainerLogsRequest, UploadZipAndExtractResult,
+    command_output, command_result, container_stats_result, get_container_ip_result,
+    is_container_running_result, list_deployment_dirs_result, session_request,
+    upload_zip_and_extract_result,
 };
 use tokio::sync::mpsc;
 
-use crate::containers::{self, StartError};
+use crate::{
+    containers::{self, StartError},
+    fs_ops, layout,
+};
 
 const fn agent_error(kind: AgentErrorKind, message: String) -> AgentError {
     AgentError {
@@ -116,6 +122,7 @@ async fn stream_command<F>(
 /// streaming install output live to the hub.
 pub async fn start_run_container(
     docker: &Docker,
+    data_dir: &Path,
     req: StartRunContainerRequest,
     request_id: u64,
     tx: &mpsc::Sender<SessionRequest>,
@@ -148,12 +155,13 @@ pub async fn start_run_container(
         }
     };
     let install_timeout = Duration::from_secs(req.install_timeout_secs);
+    let files_dir = layout::deployment_files_dir(data_dir, &req.deployment_id);
 
     stream_command(tx, request_id, wrap, |log_tx| {
         containers::start(
             docker,
             &req.container_name,
-            Path::new(&req.deployment_files_dir),
+            &files_dir,
             containers::RunContainerConfig {
                 image: run_config.image.image_tag(),
                 install_command: run_config.install_command.as_deref(),
@@ -297,4 +305,99 @@ pub async fn stream_container_logs(
         }),
     )
     .await;
+}
+
+pub fn create_deployment_dir(data_dir: &Path, deployment_id: &str) -> CommandResult {
+    match fs_ops::create_deployment_dir(data_dir, deployment_id) {
+        Ok(()) => command_result_ok(),
+        Err(msg) => command_result_err(AgentErrorKind::Unavailable, msg),
+    }
+}
+
+pub fn delete_deployment_dir(data_dir: &Path, deployment_id: &str) -> CommandResult {
+    match fs_ops::delete_deployment_dir(data_dir, deployment_id) {
+        Ok(()) => command_result_ok(),
+        Err(msg) => command_result_err(AgentErrorKind::Unavailable, msg),
+    }
+}
+
+pub fn list_deployment_dirs(data_dir: &Path) -> ListDeploymentDirsResult {
+    let result = match fs_ops::list_deployment_dirs(data_dir) {
+        Ok(ids) => list_deployment_dirs_result::Result::Ok(DeploymentIdList {
+            deployment_ids: ids,
+        }),
+        Err(msg) => list_deployment_dirs_result::Result::Error(agent_error(
+            AgentErrorKind::Unavailable,
+            msg,
+        )),
+    };
+    ListDeploymentDirsResult {
+        result: Some(result),
+    }
+}
+
+/// Receives a chunked zip upload (chunks routed in by `main.rs`) and
+/// extracts it into place before the final result is sent, matching every
+/// other create path's fs-before-DB-row invariant.
+pub async fn upload_zip_and_extract(
+    data_dir: &Path,
+    deployment_id: String,
+    max_uncompressed_bytes: u64,
+    mut chunk_rx: mpsc::Receiver<Chunk>,
+    request_id: u64,
+    tx: &mpsc::Sender<SessionRequest>,
+) {
+    let zip_path = layout::tmp_dir(data_dir).join(format!("upload-{deployment_id}.zip"));
+    let result = match receive_zip(&zip_path, &mut chunk_rx).await {
+        Ok(()) => {
+            let data_dir = data_dir.to_path_buf();
+            let deployment_id = deployment_id.clone();
+            let zip_path = zip_path.clone();
+            tokio::task::spawn_blocking(move || {
+                fs_ops::extract_and_place(
+                    &data_dir,
+                    &deployment_id,
+                    &zip_path,
+                    max_uncompressed_bytes,
+                )
+            })
+            .await
+            .map_err(|err| err.to_string())
+            .and_then(|inner| inner)
+        }
+        Err(err) => Err(err),
+    };
+    std::fs::remove_file(&zip_path).ok();
+
+    let payload = match result {
+        Ok(size) => upload_zip_and_extract_result::Result::ContentSizeBytes(size),
+        Err(msg) => upload_zip_and_extract_result::Result::Error(agent_error(
+            AgentErrorKind::CommandFailed,
+            msg,
+        )),
+    };
+    send(
+        tx,
+        request_id,
+        session_request::Payload::UploadZipAndExtractResult(UploadZipAndExtractResult {
+            result: Some(payload),
+        }),
+    )
+    .await;
+}
+
+async fn receive_zip(zip_path: &Path, chunk_rx: &mut mpsc::Receiver<Chunk>) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(zip_path)
+        .await
+        .map_err(|err| err.to_string())?;
+    while let Some(chunk) = chunk_rx.recv().await {
+        file.write_all(&chunk.data)
+            .await
+            .map_err(|err| err.to_string())?;
+        if chunk.is_final {
+            return Ok(());
+        }
+    }
+    Err("hub closed the upload stream before sending a final chunk".to_string())
 }

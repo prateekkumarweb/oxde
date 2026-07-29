@@ -405,6 +405,10 @@ async fn execute_git_deployment(
         return Err(err);
     }
 
+    if matches!(git_source.mode, GitDeployMode::Run(_)) {
+        storage::ship_run_deployment_to_agent(state, app_id, deployment_id).await?;
+    }
+
     activate_with_containers(state, app_id, deployment_id).await?;
     storage::mark_git_deployment_ready(state, app_id, deployment_id).await
 }
@@ -427,7 +431,6 @@ pub async fn activate_with_containers(
         let container_name = deployment.container_name.ok_or_else(|| {
             AppError::ContainerStartFailed("run-mode deployment has no container_name".to_string())
         })?;
-        let checkout_dir = state.deployment_files_dir(&app.id, deployment_id);
         let install_target = run_config.install_command.is_some().then(|| LogTarget {
             path: state.deployment_log_path(&app.id, deployment_id, LogKind::Install),
             deployment_id: deployment_id.to_string(),
@@ -436,8 +439,8 @@ pub async fn activate_with_containers(
         });
         containers::start(
             state.agent_link(),
+            deployment_id,
             &container_name,
-            &checkout_dir,
             run_config,
             &app.env_vars,
             Duration::from_secs(state.install_timeout_secs()),
@@ -490,6 +493,7 @@ pub async fn delete_deployment_with_containers(
 
     if let Some(container_name) = container_name {
         containers::stop_and_remove(state.agent_link(), &container_name, false).await?;
+        crate::agent_fs::delete_deployment_dir(state.agent_link(), deployment_id).await?;
     }
     Ok(())
 }

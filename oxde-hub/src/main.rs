@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod accounts;
+mod agent_fs;
 mod agent_link;
 mod api_tokens;
 mod auth;
@@ -92,9 +93,6 @@ async fn main() -> anyhow::Result<()> {
     storage::sweep_orphaned_dirs(&state)
         .await
         .context("failed to sweep orphaned app/deployment directories on startup")?;
-    fail_pending_deployments(&state).await;
-    reconcile_run_mode_containers(&state).await;
-    auth::spawn_login_attempts_sweeper(state.clone());
 
     let agent_link = state.agent_link().clone();
     tokio::spawn(async move {
@@ -102,6 +100,11 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!(error = ?err, "hub gRPC listener stopped");
         }
     });
+
+    fail_pending_deployments(&state).await;
+    reconcile_run_mode_containers(&state).await;
+    storage::sweep_agent_orphaned_deployment_dirs(&state).await;
+    auth::spawn_login_attempts_sweeper(state.clone());
 
     let app = routes::build_router(state);
 
@@ -290,12 +293,11 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
         return Ok(());
     };
 
-    let checkout_dir = state.deployment_files_dir(&app.id, &deployment_id);
     tracing::info!(app = app.name, "starting run-mode container on startup");
     containers::start(
         state.agent_link(),
+        &deployment_id,
         container_name,
-        &checkout_dir,
         run_config,
         &app.env_vars,
         std::time::Duration::from_secs(state.install_timeout_secs()),

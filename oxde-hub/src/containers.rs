@@ -90,16 +90,16 @@ async fn drain_command_output(
 /// Streams install output live into `install_log_target`, if given.
 pub async fn start(
     agent_link: &AgentLink,
+    deployment_id: &str,
     container_name: &str,
-    deployment_files_dir: &Path,
     run_config: &RunConfig,
     env_vars: &[EnvVar],
     install_timeout: Duration,
     install_log_target: Option<LogTarget>,
 ) -> AppResult<()> {
     let payload = session_response::Payload::StartRunContainer(StartRunContainerRequest {
+        deployment_id: deployment_id.to_string(),
         container_name: container_name.to_string(),
-        deployment_files_dir: deployment_files_dir.display().to_string(),
         run_config_json: serde_json::to_string(run_config)?,
         env_vars_json: serde_json::to_string(env_vars)?,
         install_timeout_secs: install_timeout.as_secs(),

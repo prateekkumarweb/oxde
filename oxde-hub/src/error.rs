@@ -73,6 +73,8 @@ pub enum AppError {
     AgentTimeout,
     #[error("agent error: {0}")]
     AgentError(String),
+    #[error("agent operation failed: {0}")]
+    AgentOperationFailed(String),
     #[error("upload too large")]
     TooLarge,
     #[error("missing 'file' field in upload")]
@@ -147,7 +149,8 @@ impl IntoResponse for AppError {
             | Self::ContainerUnavailable(_)
             | Self::AgentUnavailable
             | Self::AgentTimeout
-            | Self::AgentError(_) => StatusCode::BAD_GATEWAY,
+            | Self::AgentError(_)
+            | Self::AgentOperationFailed(_) => StatusCode::BAD_GATEWAY,
             Self::Zip(_)
             | Self::Multipart(_)
             | Self::Io(_)

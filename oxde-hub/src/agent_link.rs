@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::{Stream, StreamExt};
 use oxde_proto::hub::v1::{
     GetHostStatsRequest, HostStatsResult, SessionRequest, SessionResponse, session_request,
     session_response,
@@ -132,22 +133,37 @@ impl AgentLink {
     }
 
     /// Sends every payload in `payloads` under one `request_id` before
-    /// awaiting a single reply - "hub sends N, agent replies once" (e.g. an
-    /// upload's chunks). Doesn't inspect payload contents.
+    /// awaiting a single reply - "hub sends N, agent replies once" (e.g. a
+    /// handful of directory-lifecycle ops). Doesn't inspect payload
+    /// contents.
     pub async fn call_chunked(
         &self,
         payloads: Vec<session_response::Payload>,
     ) -> AppResult<session_request::Payload> {
+        self.call_streamed(futures_util::stream::iter(payloads), CALL_TIMEOUT)
+            .await
+    }
+
+    /// Same as `call_chunked`, but takes a `Stream` instead of a `Vec` and
+    /// a caller-chosen timeout - for transfers too large to buffer as one
+    /// `Vec` up front (a multi-hundred-MB upload) and too slow for
+    /// `CALL_TIMEOUT`, which is sized for quick RPCs.
+    pub async fn call_streamed(
+        &self,
+        payloads: impl Stream<Item = session_response::Payload>,
+        timeout: Duration,
+    ) -> AppResult<session_request::Payload> {
+        let mut payloads = std::pin::pin!(payloads);
         let request_id = self.next_request_id();
         let (tx, rx) = oneshot::channel();
         self.inner.pending.lock().await.insert(request_id, tx);
 
         let outbound = self.outbound(request_id).await?;
-        for payload in payloads {
+        while let Some(payload) = payloads.next().await {
             self.send(&outbound, request_id, payload).await?;
         }
 
-        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(payload)) => Ok(payload),
             Ok(Err(_)) => Err(AppError::AgentUnavailable),
             Err(_) => {
