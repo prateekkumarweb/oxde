@@ -7,6 +7,7 @@ use oxde_proto::{
         hub_service_server::{HubService, HubServiceServer},
     },
 };
+use tokio::sync::mpsc;
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming, transport::Server};
 
@@ -14,6 +15,10 @@ use crate::agent_link::AgentLink;
 
 struct Hub {
     agent_link: AgentLink,
+    /// Signaled once per `Session` connection, after `set_outbound` so the
+    /// agent is already callable - lets `main.rs` re-run agent-dependent
+    /// reconciliation without `grpc.rs` needing to know what that means.
+    connected_tx: mpsc::Sender<()>,
 }
 
 #[tonic::async_trait]
@@ -33,6 +38,9 @@ impl HubService for Hub {
         let mut incoming = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         self.agent_link.set_outbound(tx).await;
+        // A full connected_tx channel just means a reconciliation run is
+        // already pending or in progress - nothing new to signal.
+        let _ = self.connected_tx.try_send(());
 
         let agent_link = self.agent_link.clone();
         tokio::spawn(async move {
@@ -48,12 +56,16 @@ impl HubService for Hub {
 }
 
 /// Spawned alongside the HTTP server so an agent can dial in and confirm
-/// it's talking to a live hub.
-pub async fn serve(agent_link: AgentLink) -> anyhow::Result<()> {
+/// it's talking to a live hub. `connected_tx` is signaled on every
+/// connection (see `Hub::session`).
+pub async fn serve(agent_link: AgentLink, connected_tx: mpsc::Sender<()>) -> anyhow::Result<()> {
     let addr = ([0, 0, 0, 0], AGENT_GRPC_PORT).into();
     tracing::info!("hub gRPC listener started on {addr}");
     Server::builder()
-        .add_service(HubServiceServer::new(Hub { agent_link }))
+        .add_service(HubServiceServer::new(Hub {
+            agent_link,
+            connected_tx,
+        }))
         .serve(addr)
         .await?;
     Ok(())
@@ -79,10 +91,12 @@ mod tests {
         let addr = incoming.local_addr().expect("local_addr");
 
         let server_link = agent_link.clone();
+        let (connected_tx, _) = mpsc::channel(1);
         tokio::spawn(async move {
             Server::builder()
                 .add_service(HubServiceServer::new(Hub {
                     agent_link: server_link,
+                    connected_tx,
                 }))
                 .serve_with_incoming(incoming)
                 .await

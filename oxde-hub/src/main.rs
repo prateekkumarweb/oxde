@@ -14,6 +14,7 @@ mod error;
 mod git_fetch;
 mod grpc;
 mod host_stats;
+mod reconcile;
 mod reverse_proxy;
 mod routes;
 mod state;
@@ -25,12 +26,10 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use oxde_db::models::User;
-use oxde_models::{App, DeploymentStatus};
 
 use crate::{
     accounts::AccountRole,
     config::{Config, TlsConfig},
-    error::AppResult,
     state::{AppState, AppStateLimits},
 };
 
@@ -94,16 +93,20 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to sweep orphaned app/deployment directories on startup")?;
 
+    let (agent_connected_tx, mut agent_connected_rx) = tokio::sync::mpsc::channel(1);
     let agent_link = state.agent_link().clone();
     tokio::spawn(async move {
-        if let Err(err) = grpc::serve(agent_link).await {
+        if let Err(err) = grpc::serve(agent_link, agent_connected_tx).await {
             tracing::error!(error = ?err, "hub gRPC listener stopped");
         }
     });
+    let reconcile_state = state.clone();
+    tokio::spawn(async move {
+        while agent_connected_rx.recv().await.is_some() {
+            reconcile::on_agent_connected(&reconcile_state).await;
+        }
+    });
 
-    fail_pending_deployments(&state).await;
-    reconcile_run_mode_containers(&state).await;
-    storage::sweep_agent_orphaned_deployment_dirs(&state).await;
     auth::spawn_login_attempts_sweeper(state.clone());
 
     let app = routes::build_router(state);
@@ -187,135 +190,6 @@ async fn bootstrap_admin(
     tracing::info!(
         username = admin_username,
         "bootstrapped admin user from config"
-    );
-    Ok(())
-}
-
-/// A deployment left `Pending` was mid-clone/install/activate when the
-/// server stopped - its container may or may not have survived the
-/// restart, so rather than guess, it's marked `Failed` and any lingering
-/// install container is force-removed.
-async fn fail_pending_deployments(state: &AppState) {
-    let apps = match storage::list_apps(state).await {
-        Ok(apps) => apps,
-        Err(err) => {
-            tracing::error!(error = %err, "failed to list apps for pending-deployment reconciliation");
-            return;
-        }
-    };
-
-    for app in apps {
-        let deployments = match storage::list_deployments(state, &app.id).await {
-            Ok(deployments) => deployments,
-            Err(err) => {
-                tracing::error!(error = %err, app = app.name, "failed to list deployments for pending-deployment reconciliation");
-                continue;
-            }
-        };
-
-        for deployment in deployments {
-            if !matches!(deployment.status, DeploymentStatus::Pending) {
-                continue;
-            }
-
-            tracing::warn!(
-                app = app.name,
-                deployment = deployment.id,
-                "marking deployment interrupted by server restart as failed"
-            );
-
-            if let Some(container_name) = &deployment.container_name
-                && let Err(err) =
-                    containers::stop_and_remove(state.agent_link(), container_name, true).await
-            {
-                tracing::error!(
-                    error = %err,
-                    app = app.name,
-                    deployment = deployment.id,
-                    "failed to remove install container during reconciliation"
-                );
-            }
-
-            if let Err(err) = storage::fail_git_deployment(
-                state,
-                &app.id,
-                &deployment.id,
-                "interrupted by server restart",
-            )
-            .await
-            {
-                tracing::error!(
-                    error = %err,
-                    app = app.name,
-                    deployment = deployment.id,
-                    "failed to mark interrupted deployment as failed"
-                );
-            }
-        }
-    }
-}
-
-/// Podman containers survive an `OxDe` restart (the restart policy doesn't
-/// depend on this process), so recovery here means starting any run-mode
-/// app whose container isn't already running - `containers::start` is
-/// idempotent, so this is safe to call unconditionally. One app's
-/// reconciliation failure is logged and skipped rather than aborting
-/// startup, so a single broken run-mode app can't take down unrelated apps.
-async fn reconcile_run_mode_containers(state: &AppState) {
-    let apps = match storage::list_apps(state).await {
-        Ok(apps) => apps,
-        Err(err) => {
-            tracing::error!(error = %err, "failed to list apps for startup reconciliation");
-            return;
-        }
-    };
-
-    for app in apps {
-        if let Err(err) = reconcile_app(state, &app).await {
-            tracing::error!(
-                error = %err,
-                app = app.name,
-                "failed to reconcile run-mode container on startup"
-            );
-        }
-    }
-}
-
-async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
-    let Some(run_config) = app.run_config() else {
-        return Ok(());
-    };
-    let Some(deployment_id) = storage::active_deployment_id(state, &app.id).await else {
-        return Ok(());
-    };
-    let deployment = storage::get_deployment(state, &app.id, &deployment_id).await?;
-    let Some(container_name) = &deployment.container_name else {
-        return Ok(());
-    };
-
-    tracing::info!(app = app.name, "starting run-mode container on startup");
-    containers::start(
-        state.agent_link(),
-        &deployment_id,
-        container_name,
-        run_config,
-        &app.env_vars,
-        std::time::Duration::from_secs(state.install_timeout_secs()),
-        None, // install already ran on a previous startup
-    )
-    .await?;
-
-    // Container survives our restart, but nothing was capturing its logs
-    // while we were down - resume, or run.log stays stale until redeploy.
-    containers::spawn_run_log_pump(
-        state.agent_link(),
-        container_name,
-        deployment_logs::LogTarget {
-            path: state.deployment_log_path(&app.id, &deployment_id, deployment_logs::LogKind::Run),
-            deployment_id: deployment_id.clone(),
-            kind: deployment_logs::LogKind::Run,
-            registry: state.log_registry().clone(),
-        },
     );
     Ok(())
 }
