@@ -18,12 +18,14 @@ OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, written in 
 - **Rust**, edition 2024 (a recent stable toolchain, install via [rustup](https://rustup.rs)).
 - **[Vite+](https://viteplus.dev/guide/)** installed globally, so the `vp` command is on your `PATH`, used to build the dashboard frontend (`oxde-ui/`). Vite+ manages the Node.js runtime and package manager (`pnpm`) for you.
 - **`protoc`** (the Protocol Buffers compiler), needed to build `oxde-proto`'s generated gRPC code - install via your package manager (e.g. `brew install protobuf`, `apt install protobuf-compiler`).
-- **Podman** (rootless), reachable at its default local socket, needed to run git-sourced apps declared as a long-lived process ("run mode") or with a build step. Not required for zip-upload or static git deploys.
+- **Podman** (rootless), reachable at its default local socket, needed to run git-sourced apps declared as a long-lived process ("run mode") or with a build step. Not required for zip-upload or static git deploys. Only `oxde-agent` touches Podman - `oxde-hub` never does.
   - On macOS, container IPs aren't reachable from the host by default; install [`podman-mac-net-connect`](https://github.com/AlmirKadric-Published/podman-mac-net-connect) to route to them for local testing.
 
 ## Configuration
 
-OxDe reads a TOML config file, `oxde.toml` in the working directory by default (override with `$OXDE_CONFIG`). Copy [`oxde.example.toml`](oxde.example.toml) to `oxde.toml` and adjust it, it documents every setting, required and optional, with comments.
+`oxde-hub` reads a TOML config file, `oxde.toml` in the working directory by default (override with `$OXDE_CONFIG`). Copy [`oxde.example.toml`](oxde.example.toml) to `oxde.toml` and adjust it, it documents every setting, required and optional, with comments.
+
+`oxde-agent` has no config file - its only setting is `$OXDE_AGENT_DATA_DIR` (where it stores run-mode app content and container state), defaulting to `./agent-data` in its working directory.
 
 ## Build & run
 
@@ -34,7 +36,12 @@ cargo xtask build              # builds oxde-ui/dist, then cargo build
 cargo xtask build -- --release # release build
 cargo xtask build-ui           # dashboard frontend only (vp install && vp build in oxde-ui/)
 cargo run -p oxde-hub          # requires cargo xtask build-ui at least once first
+cargo run -p oxde-agent        # also required - see below
 ```
+
+OxDe is two binaries: `oxde-hub` (dashboard, API, reverse proxy) and `oxde-agent` (talks to Podman, runs containers). Both need to be running, on the same host - the hub dials the agent over gRPC at `127.0.0.1:50051`. `cargo xtask build` builds both, since it's a plain workspace build.
+
+For production, run both under your init system of choice so they restart on crash and start on boot (e.g. two systemd units). Since `oxde-agent` talks to *rootless* Podman, it needs to run as the same user whose Podman session it's using - a systemd *user* service (not a system-wide one) for that user is the natural fit.
 
 Other useful commands:
 
