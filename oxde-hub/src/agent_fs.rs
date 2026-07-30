@@ -186,3 +186,57 @@ const fn wrap_chunk(
         chunk: Some(Chunk { data, is_final }),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use super::*;
+
+    fn test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oxde-hub-test-agent-fs-{label}-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
+    #[test]
+    fn zip_dir_includes_nested_files_with_relative_paths() {
+        let source = test_dir("zip-source");
+        std::fs::create_dir_all(source.join("css")).expect("create css dir");
+        std::fs::write(source.join("index.html"), b"<h1>hi</h1>").expect("write index.html");
+        std::fs::write(source.join("css/site.css"), b"body {}").expect("write site.css");
+        let zip_path = source.join("../zip-dir-out.zip");
+
+        zip_dir(&source, &zip_path).expect("zip_dir");
+
+        let file = std::fs::File::open(&zip_path).expect("open zip");
+        let mut archive = zip::ZipArchive::new(file).expect("read archive");
+        let mut names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).expect("entry").name().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "css/".to_string(),
+                "css/site.css".to_string(),
+                "index.html".to_string(),
+            ]
+        );
+
+        let mut contents = String::new();
+        archive
+            .by_name("index.html")
+            .expect("index.html entry")
+            .read_to_string(&mut contents)
+            .expect("read index.html");
+        assert_eq!(contents, "<h1>hi</h1>");
+
+        std::fs::remove_dir_all(&source).ok();
+        std::fs::remove_file(&zip_path).ok();
+    }
+}

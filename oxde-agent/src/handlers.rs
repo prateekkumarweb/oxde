@@ -401,3 +401,114 @@ async fn receive_zip(zip_path: &Path, chunk_rx: &mut mpsc::Receiver<Chunk>) -> R
     }
     Err("hub closed the upload stream before sending a final chunk".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{io::Cursor, time::SystemTime};
+
+    use super::*;
+
+    fn test_data_dir(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "oxde-agent-test-handlers-{label}-{}-{nanos}",
+            std::process::id(),
+        ));
+        // main.rs creates tmp/ at agent startup in production.
+        std::fs::create_dir_all(layout::tmp_dir(&dir)).expect("create tmp dir");
+        dir
+    }
+
+    fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, contents) in entries {
+            writer.start_file(*name, options).expect("start_file");
+            std::io::Write::write_all(&mut writer, contents).expect("write contents");
+        }
+        writer.finish().expect("finish zip").into_inner()
+    }
+
+    #[tokio::test]
+    async fn upload_zip_and_extract_assembles_chunks_and_extracts_them() {
+        let data_dir = test_data_dir("ok");
+        fs_ops::create_deployment_dir(&data_dir, "dep-1").expect("create deployment dir");
+
+        let zip_bytes = build_zip(&[("index.html", b"hello")]);
+        let (chunk_tx, chunk_rx) = mpsc::channel(4);
+        chunk_tx
+            .send(Chunk {
+                data: zip_bytes[..3].to_vec(),
+                is_final: false,
+            })
+            .await
+            .expect("send first chunk");
+        chunk_tx
+            .send(Chunk {
+                data: zip_bytes[3..].to_vec(),
+                is_final: true,
+            })
+            .await
+            .expect("send final chunk");
+        drop(chunk_tx);
+
+        let (tx, mut rx) = mpsc::channel(1);
+        upload_zip_and_extract(&data_dir, "dep-1".to_string(), 10_000, chunk_rx, 7, &tx).await;
+
+        let reply = rx.recv().await.expect("a reply was sent");
+        let session_request::Payload::UploadZipAndExtractResult(result) =
+            reply.payload.expect("payload")
+        else {
+            panic!("expected an UploadZipAndExtractResult");
+        };
+        assert_eq!(
+            result.result,
+            Some(upload_zip_and_extract_result::Result::ContentSizeBytes(5))
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                layout::deployment_files_dir(&data_dir, "dep-1").join("index.html")
+            )
+            .expect("read index.html"),
+            "hello"
+        );
+        std::fs::remove_dir_all(&data_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn upload_zip_and_extract_reports_an_error_if_the_stream_ends_early() {
+        let data_dir = test_data_dir("early-close");
+        fs_ops::create_deployment_dir(&data_dir, "dep-1").expect("create deployment dir");
+
+        let (chunk_tx, chunk_rx) = mpsc::channel(4);
+        chunk_tx
+            .send(Chunk {
+                data: b"not a full zip".to_vec(),
+                is_final: false,
+            })
+            .await
+            .expect("send chunk");
+        drop(chunk_tx);
+
+        let (tx, mut rx) = mpsc::channel(1);
+        upload_zip_and_extract(&data_dir, "dep-1".to_string(), 10_000, chunk_rx, 7, &tx).await;
+
+        let reply = rx.recv().await.expect("a reply was sent");
+        let session_request::Payload::UploadZipAndExtractResult(result) =
+            reply.payload.expect("payload")
+        else {
+            panic!("expected an UploadZipAndExtractResult");
+        };
+        assert!(
+            matches!(
+                result.result,
+                Some(upload_zip_and_extract_result::Result::Error(_))
+            ),
+            "a stream that never sends a final chunk must be reported as an error"
+        );
+        std::fs::remove_dir_all(&data_dir).ok();
+    }
+}
