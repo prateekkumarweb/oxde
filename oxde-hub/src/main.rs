@@ -3,6 +3,7 @@
 mod accounts;
 mod agent_fs;
 mod agent_link;
+mod agent_tls;
 mod api_tokens;
 mod auth;
 mod authz;
@@ -35,6 +36,10 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("failed to install the rustls crypto provider"))?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -57,6 +62,14 @@ async fn main() -> anyhow::Result<()> {
             config.data_dir.display()
         )
     })?;
+
+    let agent_tls = agent_tls::load_or_generate(&data_dir)
+        .context("failed to load or generate the hub<->agent TLS certificate")?;
+    tracing::info!(
+        fingerprint = agent_tls.fingerprint_hex,
+        "hub<->agent gRPC certificate fingerprint - configure OXDE_HUB_TLS_FINGERPRINT on an \
+         agent connecting from a different host to pin it"
+    );
 
     let db = oxde_db::connect(&data_dir)
         .await
@@ -93,20 +106,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to sweep orphaned app/deployment directories on startup")?;
 
-    let (agent_connected_tx, mut agent_connected_rx) = tokio::sync::mpsc::channel(1);
-    let agent_link = state.agent_link().clone();
-    tokio::spawn(async move {
-        if let Err(err) = grpc::serve(agent_link, agent_connected_tx).await {
-            tracing::error!(error = ?err, "hub gRPC listener stopped");
-        }
-    });
-    let reconcile_state = state.clone();
-    tokio::spawn(async move {
-        while agent_connected_rx.recv().await.is_some() {
-            reconcile::on_agent_connected(&reconcile_state).await;
-        }
-    });
-
+    spawn_grpc_and_reconciliation(&state, agent_tls.identity);
     auth::spawn_login_attempts_sweeper(state.clone());
 
     let app = routes::build_router(state);
@@ -144,6 +144,24 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Spawns the gRPC listener and, driven off its connection signal, the
+/// agent-dependent reconciliation loop (see `reconcile::on_agent_connected`).
+fn spawn_grpc_and_reconciliation(state: &AppState, agent_tls_identity: tonic::transport::Identity) {
+    let (agent_connected_tx, mut agent_connected_rx) = tokio::sync::mpsc::channel(1);
+    let agent_link = state.agent_link().clone();
+    tokio::spawn(async move {
+        if let Err(err) = grpc::serve(agent_link, agent_connected_tx, agent_tls_identity).await {
+            tracing::error!(error = ?err, "hub gRPC listener stopped");
+        }
+    });
+    let reconcile_state = state.clone();
+    tokio::spawn(async move {
+        while agent_connected_rx.recv().await.is_some() {
+            reconcile::on_agent_connected(&reconcile_state).await;
+        }
+    });
 }
 
 /// Re-evaluated on every startup, not just once: if no `Admin` currently

@@ -1,25 +1,25 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod config;
 mod containers;
 mod fs_ops;
 mod handlers;
 mod host_stats;
+mod hub_tls;
 mod layout;
 mod zip_extract;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context;
 use bollard::Docker;
-use oxde_proto::{
-    AGENT_GRPC_PORT,
-    hub::v1::{
-        Chunk, HostStatsResult, PingRequest, SessionRequest, host_stats_result,
-        hub_service_client::HubServiceClient, session_request, session_response,
-    },
+use oxde_proto::hub::v1::{
+    Chunk, HostStatsResult, PingRequest, SessionRequest, host_stats_result,
+    hub_service_client::HubServiceClient, session_request, session_response,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::transport::{ClientTlsConfig, Endpoint};
 
 /// In-flight chunked uploads, keyed by `request_id` - every
 /// `UploadZipAndExtract` message sharing a `request_id` is a chunk of the
@@ -29,6 +29,10 @@ type InFlightUploads = Arc<Mutex<HashMap<u64, mpsc::Sender<Chunk>>>>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("failed to install the rustls crypto provider"))?;
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -36,11 +40,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let data_dir = PathBuf::from(
-        std::env::var("OXDE_AGENT_DATA_DIR").unwrap_or_else(|_| "agent-data".to_string()),
-    );
-    std::fs::create_dir_all(&data_dir)?;
-    let data_dir = data_dir.canonicalize()?;
+    let config = config::Config::load().context("failed to load configuration")?;
+
+    std::fs::create_dir_all(&config.data_dir)?;
+    let data_dir = config.data_dir.canonicalize()?;
     std::fs::create_dir_all(layout::tmp_dir(&data_dir))?;
 
     let docker = containers::connect().context("failed to build Podman client")?;
@@ -48,10 +51,27 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to ensure the run-mode container network exists")?;
 
-    let hub_addr = format!("http://127.0.0.1:{AGENT_GRPC_PORT}");
+    let hub_addr = format!("https://{}", config.hub_addr);
     tracing::info!(hub_addr, "dialing hub");
 
-    let mut client = HubServiceClient::connect(hub_addr).await?;
+    let pinned_fingerprint = hub_tls::expected_fingerprint(&data_dir, config.hub_tls_fingerprint);
+    let is_first_connect = pinned_fingerprint.is_none();
+    let verifier = Arc::new(hub_tls::FingerprintVerifier::new(pinned_fingerprint));
+    let channel = Endpoint::from_shared(hub_addr)?
+        .tls_config_with_verifier(ClientTlsConfig::new(), verifier.clone())?
+        .connect()
+        .await?;
+    if is_first_connect && let Some(fingerprint) = verifier.captured_fingerprint() {
+        hub_tls::persist_fingerprint(&data_dir, &fingerprint)
+            .context("failed to persist the hub's TLS certificate fingerprint")?;
+        tracing::warn!(
+            fingerprint,
+            "no pinned hub certificate fingerprint - trusted the one presented on this first \
+             connect and pinned it for future connects"
+        );
+    }
+
+    let mut client = HubServiceClient::new(channel);
     let response = client.ping(PingRequest {}).await?.into_inner();
     tracing::info!(hub_version = response.version, "hub answered ping");
 

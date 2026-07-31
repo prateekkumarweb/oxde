@@ -25,7 +25,7 @@ OxDe is a self-hostable alternative to Vercel, Netlify, and Coolify, written in 
 
 `oxde-hub` reads a TOML config file, `oxde.toml` in the working directory by default (override with `$OXDE_CONFIG`). Copy [`oxde.example.toml`](oxde.example.toml) to `oxde.toml` and adjust it, it documents every setting, required and optional, with comments.
 
-`oxde-agent` has no config file - its only setting is `$OXDE_AGENT_DATA_DIR` (where it stores run-mode app content and container state), defaulting to `./agent-data` in its working directory.
+`oxde-agent` reads its own TOML config file, `oxde-agent.toml` in the working directory by default (override with `$OXDE_AGENT_CONFIG`). Copy [`oxde-agent.example.toml`](oxde-agent.example.toml) to `oxde-agent.toml`; every setting is optional and defaults to working with a co-located hub.
 
 ## Build & run
 

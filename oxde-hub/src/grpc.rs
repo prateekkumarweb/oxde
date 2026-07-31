@@ -9,7 +9,10 @@ use oxde_proto::{
 };
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
-use tonic::{Request, Response, Status, Streaming, transport::Server};
+use tonic::{
+    Request, Response, Status, Streaming,
+    transport::{Identity, Server, ServerTlsConfig},
+};
 
 use crate::agent_link::AgentLink;
 
@@ -57,11 +60,17 @@ impl HubService for Hub {
 
 /// Spawned alongside the HTTP server so an agent can dial in and confirm
 /// it's talking to a live hub. `connected_tx` is signaled on every
-/// connection (see `Hub::session`).
-pub async fn serve(agent_link: AgentLink, connected_tx: mpsc::Sender<()>) -> anyhow::Result<()> {
+/// connection (see `Hub::session`). `identity` is the self-signed cert
+/// the agent pins by fingerprint (see `agent_tls.rs`).
+pub async fn serve(
+    agent_link: AgentLink,
+    connected_tx: mpsc::Sender<()>,
+    identity: Identity,
+) -> anyhow::Result<()> {
     let addr = ([0, 0, 0, 0], AGENT_GRPC_PORT).into();
     tracing::info!("hub gRPC listener started on {addr}");
     Server::builder()
+        .tls_config(ServerTlsConfig::new().identity(identity))?
         .add_service(HubServiceServer::new(Hub {
             agent_link,
             connected_tx,
@@ -77,23 +86,36 @@ mod tests {
         Chunk, EchoStreamRequest, EchoUploadResult, hub_service_client::HubServiceClient,
         session_request, session_response,
     };
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
     use tokio::sync::{mpsc, oneshot};
-    use tonic::transport::server::TcpIncoming;
+    use tonic::transport::{Certificate, Channel, ClientTlsConfig, server::TcpIncoming};
 
     use super::*;
 
-    /// Starts a real hub gRPC server on an ephemeral port over its own
-    /// fresh `AgentLink`, returning that link (for the test to drive as the
-    /// hub side) and the address to dial (for a fake agent to connect to).
-    fn spawn_test_hub() -> (AgentLink, String) {
+    const TEST_TLS_SUBJECT: &str = "oxde-agent-link-test";
+
+    /// Starts a real, TLS-enabled hub gRPC server on an ephemeral port
+    /// over its own fresh `AgentLink`, returning that link (for the test
+    /// to drive as the hub side), the address to dial, and the self-signed
+    /// cert a fake agent needs to trust to connect.
+    fn spawn_test_hub() -> (AgentLink, String, Certificate) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let agent_link = AgentLink::new();
         let incoming = TcpIncoming::bind("127.0.0.1:0".parse().expect("addr")).expect("bind");
         let addr = incoming.local_addr().expect("local_addr");
+
+        let CertifiedKey { cert, signing_key } =
+            generate_simple_self_signed(vec![TEST_TLS_SUBJECT.to_string()])
+                .expect("generate test cert");
+        let ca_cert = Certificate::from_pem(cert.pem());
+        let identity = Identity::from_pem(cert.pem(), signing_key.serialize_pem());
 
         let server_link = agent_link.clone();
         let (connected_tx, _) = mpsc::channel(1);
         tokio::spawn(async move {
             Server::builder()
+                .tls_config(ServerTlsConfig::new().identity(identity))
+                .expect("tls_config")
                 .add_service(HubServiceServer::new(Hub {
                     agent_link: server_link,
                     connected_tx,
@@ -103,7 +125,27 @@ mod tests {
                 .expect("serve");
         });
 
-        (agent_link, format!("http://{addr}"))
+        (agent_link, format!("https://{addr}"), ca_cert)
+    }
+
+    /// Trusts exactly the cert `spawn_test_hub` generated - fingerprint
+    /// pinning itself is oxde-agent's concern, not tested here.
+    async fn connect_test_client(
+        hub_addr: String,
+        ca_cert: Certificate,
+    ) -> HubServiceClient<Channel> {
+        let channel = Channel::from_shared(hub_addr)
+            .expect("uri")
+            .tls_config(
+                ClientTlsConfig::new()
+                    .ca_certificate(ca_cert)
+                    .domain_name(TEST_TLS_SUBJECT),
+            )
+            .expect("tls_config")
+            .connect()
+            .await
+            .expect("connect");
+        HubServiceClient::new(channel)
     }
 
     /// Proves `call_chunked`'s "hub sends N, agent replies once" half: a
@@ -111,11 +153,11 @@ mod tests {
     /// final, then replies with the total byte count received.
     #[tokio::test]
     async fn call_chunked_delivers_every_chunk_before_the_single_reply() {
-        let (agent_link, hub_addr) = spawn_test_hub();
+        let (agent_link, hub_addr, ca_cert) = spawn_test_hub();
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let mut client = HubServiceClient::connect(hub_addr).await.expect("connect");
+            let mut client = connect_test_client(hub_addr, ca_cert).await;
             let (tx, rx) = mpsc::channel(16);
             let mut inbound = client
                 .session(tokio_stream::wrappers::ReceiverStream::new(rx))
@@ -178,11 +220,11 @@ mod tests {
     /// run of `EchoStreamChunk` replies, the last marked final.
     #[tokio::test]
     async fn call_streaming_reply_delivers_every_chunk_the_agent_sends() {
-        let (agent_link, hub_addr) = spawn_test_hub();
+        let (agent_link, hub_addr, ca_cert) = spawn_test_hub();
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let mut client = HubServiceClient::connect(hub_addr).await.expect("connect");
+            let mut client = connect_test_client(hub_addr, ca_cert).await;
             let (tx, rx) = mpsc::channel(16);
             let mut inbound = client
                 .session(tokio_stream::wrappers::ReceiverStream::new(rx))

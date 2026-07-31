@@ -1,3 +1,4 @@
 /target
-/data
+/local-data
 /oxde.toml
+/oxde-agent.toml

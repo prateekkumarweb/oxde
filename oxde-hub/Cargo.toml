@@ -21,16 +21,19 @@ oxde-models.workspace = true
 oxde-proto.workspace = true
 papaya.workspace = true
 rand.workspace = true
+rcgen.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 rust-embed = { workspace = true, features = ["mime-guess"] }
+rustls = { workspace = true, features = ["ring"] }
 schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 toasty.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream.workspace = true
-tonic.workspace = true
+tonic = { workspace = true, features = ["tls-ring"] }
 tonic-prost.workspace = true
 toml.workspace = true
 tower = { workspace = true, features = ["util"] }
@@ -40,6 +43,3 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 ts-rs = { workspace = true, features = ["jiff-impl"] }
 uuid = { workspace = true, features = ["v7"] }
 zip.workspace = true
-
-[dev-dependencies]
-rcgen.workspace = true

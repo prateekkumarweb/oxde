@@ -1,0 +1,13 @@
+# Everything below is optional; values shown are the defaults.
+
+# Where run-mode app content and container state are stored on disk.
+# data_dir = "./agent-data"
+
+# The hub's host:port for the gRPC agent-link channel.
+# hub_addr = "127.0.0.1:50051"
+
+# Pins the hub's gRPC certificate by SHA-256 fingerprint. Unset, the agent
+# trusts whatever the hub presents on its first connect and persists that
+# fingerprint for future connects instead - the hub logs its fingerprint
+# on startup.
+# hub_tls_fingerprint = "..."
