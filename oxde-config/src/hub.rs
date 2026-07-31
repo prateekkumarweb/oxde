@@ -1,10 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub struct Config {
+pub struct OxdeConfig {
     pub data_dir: PathBuf,
     pub admin_username: String,
     pub admin_password: String,
@@ -31,13 +30,13 @@ pub struct Config {
     pub https_port: u16,
 }
 
-impl Config {
-    pub fn load() -> anyhow::Result<Self> {
-        let path = std::env::var("OXDE_CONFIG").unwrap_or_else(|_| "oxde.toml".to_string());
-        let contents = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read config file at {path}"))?;
-        toml::from_str(&contents).with_context(|| format!("failed to parse config file at {path}"))
-    }
+/// # Errors
+///
+/// Returns an error if `oxde.toml` (or `$OXDE_CONFIG`) can't be read or
+/// parsed.
+pub fn load_oxde_config() -> anyhow::Result<OxdeConfig> {
+    let path = std::env::var("OXDE_CONFIG").unwrap_or_else(|_| "oxde.toml".to_string());
+    crate::load(Path::new(&path))
 }
 
 /// `Off` uses `http_port`, `Manual` uses `https_port` - both configurable

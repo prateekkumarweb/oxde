@@ -1,7 +1,7 @@
-# Everything below is optional; values shown are the defaults.
-
 # Where run-mode app content and container state are stored on disk.
-# data_dir = "./agent-data"
+data_dir = "./agent-data"
+
+# Everything below is optional; values shown are the defaults.
 
 # The hub's host:port for the gRPC agent-link channel.
 # hub_addr = "127.0.0.1:50051"

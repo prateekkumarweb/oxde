@@ -1,11 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub struct Config {
-    #[serde(default = "default_data_dir")]
+pub struct AgentConfig {
     pub data_dir: PathBuf,
     #[serde(default = "default_hub_addr")]
     pub hub_addr: String,
@@ -16,25 +14,13 @@ pub struct Config {
     pub hub_tls_fingerprint: Option<String>,
 }
 
-impl Config {
-    /// The file is entirely optional today - every field defaults - so a
-    /// missing file is not an error, unlike `oxde-hub`'s config.
-    pub fn load() -> anyhow::Result<Self> {
-        let path =
-            std::env::var("OXDE_AGENT_CONFIG").unwrap_or_else(|_| "oxde-agent.toml".to_string());
-        let contents = match std::fs::read_to_string(&path) {
-            Ok(contents) => contents,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(err) => {
-                return Err(err).with_context(|| format!("failed to read config file at {path}"));
-            }
-        };
-        toml::from_str(&contents).with_context(|| format!("failed to parse config file at {path}"))
-    }
-}
-
-fn default_data_dir() -> PathBuf {
-    PathBuf::from("agent-data")
+/// # Errors
+///
+/// Returns an error if `oxde-agent.toml` (or `$OXDE_AGENT_CONFIG`) can't be
+/// read or parsed.
+pub fn load_agent_config() -> anyhow::Result<AgentConfig> {
+    let path = std::env::var("OXDE_AGENT_CONFIG").unwrap_or_else(|_| "oxde-agent.toml".to_string());
+    crate::load(Path::new(&path))
 }
 
 fn default_hub_addr() -> String {
@@ -46,16 +32,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_fields_fall_back_to_defaults() {
-        let config: Config = toml::from_str("").expect("empty config should parse");
-        assert_eq!(config.data_dir, default_data_dir());
+    fn data_dir_is_required() {
+        let err = toml::from_str::<AgentConfig>("").expect_err("data_dir must be required");
+        assert!(err.to_string().contains("data_dir"));
+    }
+
+    #[test]
+    fn optional_fields_fall_back_to_defaults() {
+        let config: AgentConfig =
+            toml::from_str(r#"data_dir = "/var/lib/oxde-agent""#).expect("config should parse");
+        assert_eq!(config.data_dir, PathBuf::from("/var/lib/oxde-agent"));
         assert_eq!(config.hub_addr, default_hub_addr());
         assert_eq!(config.hub_tls_fingerprint, None);
     }
 
     #[test]
     fn fields_override_their_defaults() {
-        let config: Config = toml::from_str(
+        let config: AgentConfig = toml::from_str(
             r#"
             data_dir = "/var/lib/oxde-agent"
             hub_addr = "hub.internal:50051"

@@ -47,11 +47,11 @@ fn usage() -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// Runs a `toasty-cli` migration subcommand against the database at
-/// `./data/oxde.db` - the same file `oxde` itself opens by default (see
-/// `oxde.toml`'s `data_dir`). `generate` only reads the schema compiled
-/// from `oxde_db::models`, so it's safe to run against that file even
-/// though it's also the real data `OxDe` serves from.
+/// Runs a `toasty-cli` migration subcommand against the real database, at
+/// the `data_dir` configured in `oxde.toml` (or `$OXDE_CONFIG`) - same file
+/// `oxde-hub` itself opens. `generate` only reads the schema compiled from
+/// `oxde_db::models`, so it's safe to run against that file even though
+/// it's also the real data `oxde-hub` serves from.
 fn migration(args: Vec<String>) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -71,14 +71,18 @@ fn migration(args: Vec<String>) -> ExitCode {
 }
 
 async fn run_migration_cli(args: Vec<String>) -> anyhow::Result<()> {
-    let data_dir = Path::new("data");
-    std::fs::create_dir_all(data_dir)?;
-    let db = oxde_db::connect(data_dir).await?;
+    let data_dir = configured_data_dir()?;
+    std::fs::create_dir_all(&data_dir)?;
+    let db = oxde_db::connect(&data_dir).await?;
 
     let cli_args = ["oxde".to_string(), "migration".to_string()]
         .into_iter()
         .chain(args);
     toasty_cli::ToastyCli::new(db).parse_from(cli_args).await
+}
+
+fn configured_data_dir() -> anyhow::Result<std::path::PathBuf> {
+    Ok(oxde_config::load_oxde_config()?.data_dir)
 }
 
 fn gen_types() -> bool {

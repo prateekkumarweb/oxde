@@ -7,6 +7,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+oxde-config.workspace = true
 oxde-db.workspace = true
 toasty-cli.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

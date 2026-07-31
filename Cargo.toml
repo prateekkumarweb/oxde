@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxde-agent", "oxde-db", "oxde-hub", "oxde-models", "oxde-proto", "xtask"]
+members = ["oxde-agent", "oxde-config", "oxde-db", "oxde-hub", "oxde-models", "oxde-proto", "xtask"]
 resolver = "3"
 
 [workspace.lints.rust]
@@ -24,6 +24,7 @@ futures-util = "0.3.33"
 gix = "0.86.0"
 hyper-util = "0.1.20"
 jiff = "0.2.35"
+oxde-config = { path = "oxde-config" }
 oxde-db = { path = "oxde-db" }
 oxde-models = { path = "oxde-models" }
 oxde-proto = { path = "oxde-proto" }

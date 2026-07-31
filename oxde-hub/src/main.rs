@@ -7,7 +7,6 @@ mod agent_tls;
 mod api_tokens;
 mod auth;
 mod authz;
-mod config;
 mod containers;
 mod dashboard_assets;
 mod deployment_logs;
@@ -26,11 +25,11 @@ mod zip_extract;
 use std::net::SocketAddr;
 
 use anyhow::Context;
+use oxde_config::TlsConfig;
 use oxde_db::models::User;
 
 use crate::{
     accounts::AccountRole,
-    config::{Config, TlsConfig},
     state::{AppState, AppStateLimits},
 };
 
@@ -47,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::load().context("failed to load configuration")?;
+    let config = oxde_config::load_oxde_config().context("failed to load configuration")?;
 
     // Must be absolute: it's used as a bind-mount source for run-mode
     // containers, which Podman resolves against its own process, not

@@ -3789,6 +3789,7 @@ dependencies = [
  "bollard",
  "bytes",
  "futures-util",
+ "oxde-config",
  "oxde-models",
  "oxde-proto",
  "rcgen",
@@ -3799,12 +3800,21 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-stream",
- "toml",
  "tonic",
  "tonic-prost",
  "tracing",
  "tracing-subscriber",
  "zip",
+]
+
+[[package]]
+name = "oxde-config"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "oxde-proto",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -3832,6 +3842,7 @@ dependencies = [
  "gix",
  "hyper-util",
  "jiff",
+ "oxde-config",
  "oxde-db",
  "oxde-models",
  "oxde-proto",
@@ -3849,7 +3860,6 @@ dependencies = [
  "toasty",
  "tokio",
  "tokio-stream",
- "toml",
  "tonic",
  "tonic-prost",
  "tower",
@@ -6833,6 +6843,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "oxde-config",
  "oxde-db",
  "toasty-cli",
  "tokio",

@@ -1,6 +1,5 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-mod config;
 mod containers;
 mod fs_ops;
 mod handlers;
@@ -40,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = config::Config::load().context("failed to load configuration")?;
+    let config = oxde_config::load_agent_config().context("failed to load configuration")?;
 
     std::fs::create_dir_all(&config.data_dir)?;
     let data_dir = config.data_dir.canonicalize()?;
