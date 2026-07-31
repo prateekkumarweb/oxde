@@ -301,7 +301,7 @@ async fn mcp_auth(
 pub fn router(state: &AppState) -> Router<AppState> {
     let mcp_state = state.clone();
     let mut config = StreamableHttpServerConfig::default();
-    config.stateful_mode = false;
+    config.legacy_session_mode = false;
     config.json_response = true;
     config.allowed_hosts = allowed_hosts(state.base_domain());
 
