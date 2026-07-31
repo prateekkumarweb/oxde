@@ -45,6 +45,8 @@ pub enum AppError {
     InvalidTokenExpiry(i64),
     #[error("token not found")]
     TokenNotFound,
+    #[error("host not found")]
+    HostNotFound,
     #[error("invalid credentials")]
     InvalidCredentials,
     #[error("too many failed login attempts - try again in {0} minute(s)")]
@@ -116,7 +118,8 @@ impl IntoResponse for AppError {
             Self::AppNotFound(_)
             | Self::DeploymentNotFound(_)
             | Self::UserNotFound(_)
-            | Self::TokenNotFound => StatusCode::NOT_FOUND,
+            | Self::TokenNotFound
+            | Self::HostNotFound => StatusCode::NOT_FOUND,
             Self::AppAlreadyExists(_)
             | Self::DeleteActiveDeployment
             | Self::DeploymentInProgress(_)

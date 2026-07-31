@@ -81,6 +81,25 @@ pub struct ApiToken {
     pub user: Deferred<User>,
 }
 
+#[derive(Debug, Clone, toasty::Model)]
+pub struct Host {
+    #[key]
+    #[auto]
+    pub id: i64,
+    pub name: String,
+    /// Non-secret lookup key; the secret half is only ever stored hashed
+    /// (`token_hash`), since a hash can't be looked up by equality.
+    #[unique]
+    pub token_id: String,
+    pub token_hash: String,
+    /// Revocation flips this rather than deleting the row.
+    pub revoked: bool,
+    /// Set on every successful agent connect; `None` until the first one.
+    pub last_seen_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionLevel {
     Read,

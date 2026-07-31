@@ -8,8 +8,8 @@ use std::{
 use jiff::Timestamp;
 use oxde_db::models::{
     ApiToken as DbApiToken, App as DbApp, AppPermission as DbAppPermission,
-    Deployment as DbDeployment, DeploymentState, PermissionLevel as DbPermissionLevel,
-    User as DbUser,
+    Deployment as DbDeployment, DeploymentState, Host as DbHost,
+    PermissionLevel as DbPermissionLevel, User as DbUser,
 };
 use oxde_models::{
     App, AppPermission, AppSource, BuildInfo, Deployment, DeploymentStatus, EnvVar, GitDeployMode,
@@ -329,6 +329,46 @@ pub async fn find_user_by_api_token(
     }
 
     Ok(Some(token.user().exec(&mut db).await?))
+}
+
+pub async fn create_host(state: &AppState, name: &str) -> AppResult<(DbHost, String)> {
+    let now = Timestamp::now().as_second();
+    let (token_id, secret, token_hash) = crate::api_tokens::generate()?;
+    let mut db = state.db().clone();
+    let row = DbHost::create()
+        .name(name)
+        .token_id(&token_id)
+        .token_hash(token_hash)
+        .revoked(false)
+        .created_at(now)
+        .updated_at(now)
+        .exec(&mut db)
+        .await?;
+
+    let plaintext = crate::api_tokens::format_token(&token_id, &secret);
+    Ok((row, plaintext))
+}
+
+pub async fn list_hosts(state: &AppState) -> AppResult<Vec<DbHost>> {
+    let mut db = state.db().clone();
+    Ok(DbHost::all().exec(&mut db).await?)
+}
+
+pub async fn revoke_host(state: &AppState, host_id: i64) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let mut host = DbHost::all()
+        .filter(DbHost::fields().id().eq(host_id))
+        .first()
+        .exec(&mut db)
+        .await?
+        .ok_or(AppError::HostNotFound)?;
+
+    host.update()
+        .revoked(true)
+        .updated_at(Timestamp::now().as_second())
+        .exec(&mut db)
+        .await?;
+    Ok(())
 }
 
 /// A user deleted after being granted access leaves an orphaned grant with
@@ -1059,9 +1099,9 @@ mod tests {
     use oxde_models::{AppSource, DeploymentStatus, GitDeployMode, GitSource};
 
     use super::{
-        activate_deployment, create_app, create_deployment, create_pending_git_deployment,
-        delete_app, delete_deployment, get_app, get_app_by_id, list_apps, list_deployments,
-        update_app,
+        activate_deployment, create_app, create_deployment, create_host,
+        create_pending_git_deployment, delete_app, delete_deployment, get_app, get_app_by_id,
+        list_apps, list_deployments, list_hosts, revoke_host, update_app,
     };
     use crate::{
         agent_link::AgentLink,
@@ -1424,5 +1464,35 @@ mod tests {
             .await
             .expect_err("a second deploy while one is pending must be rejected");
         assert!(matches!(err, AppError::DeploymentInProgress(_)));
+    }
+
+    #[tokio::test]
+    async fn create_list_revoke_host_round_trip() {
+        let state = test_state("hosts").await;
+
+        let (created, plaintext) = create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+        assert_eq!(created.name, "raspberry-pi");
+        assert!(!created.revoked);
+        assert_eq!(created.last_seen_at, None);
+        assert!(plaintext.starts_with(crate::api_tokens::PREFIX));
+
+        let hosts = list_hosts(&state).await.expect("list_hosts");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].id, created.id);
+
+        revoke_host(&state, created.id).await.expect("revoke_host");
+        let hosts = list_hosts(&state).await.expect("list_hosts");
+        assert!(hosts[0].revoked);
+    }
+
+    #[tokio::test]
+    async fn revoke_host_rejects_an_unknown_id() {
+        let state = test_state("hosts-unknown").await;
+        let err = revoke_host(&state, 404)
+            .await
+            .expect_err("unknown host id must be rejected");
+        assert!(matches!(err, AppError::HostNotFound));
     }
 }

@@ -19,6 +19,7 @@ pub mod api;
 pub mod apps;
 mod auth_routes;
 mod host_routing;
+mod hosts;
 mod mcp;
 mod users;
 
@@ -37,6 +38,7 @@ pub fn build_router(state: AppState) -> Router {
     let cookie_only_api = Router::new()
         .nest("/api", auth_routes::protected_router())
         .nest("/api/users", users::router())
+        .nest("/api/hosts", hosts::router())
         .route_layer(middleware::from_fn(enforce_same_origin))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

@@ -4,7 +4,7 @@ use std::{collections::HashSet, path::Path};
 
 pub mod models;
 
-use models::{ApiToken, App, AppPermission, Deployment, User};
+use models::{ApiToken, App, AppPermission, Deployment, Host, User};
 pub use toasty;
 
 /// Opens (creating the file if needed) the SQLite-compatible database file
@@ -23,7 +23,8 @@ pub async fn connect(data_dir: &Path) -> anyhow::Result<toasty::Db> {
         App,
         AppPermission,
         Deployment,
-        ApiToken
+        ApiToken,
+        Host
     ));
     Ok(builder.connect(&url).await?)
 }

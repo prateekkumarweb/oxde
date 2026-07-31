@@ -67,8 +67,8 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to load or generate the hub<->agent TLS certificate")?;
     tracing::info!(
         fingerprint = agent_tls.fingerprint_hex,
-        "hub<->agent gRPC certificate fingerprint - configure OXDE_HUB_TLS_FINGERPRINT on an \
-         agent connecting from a different host to pin it"
+        "hub<->agent gRPC certificate fingerprint - set hub_tls_fingerprint in oxde-agent.toml on \
+         an agent connecting from a different host to pin it"
     );
 
     let db = oxde_db::connect(&data_dir)
