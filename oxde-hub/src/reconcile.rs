@@ -48,8 +48,12 @@ async fn fail_pending_deployments(state: &AppState) {
             );
 
             if let Some(container_name) = &deployment.container_name
-                && let Err(err) =
-                    containers::stop_and_remove(&state.agent_link(), container_name, true).await
+                && let Err(err) = containers::stop_and_remove(
+                    &state.agent_link_for(app.host_id),
+                    container_name,
+                    true,
+                )
+                .await
             {
                 tracing::error!(
                     error = %err,
@@ -118,7 +122,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
 
     tracing::info!(app = app.name, "starting run-mode container");
     containers::start(
-        &state.agent_link(),
+        &state.agent_link_for(app.host_id),
         &deployment_id,
         container_name,
         run_config,
@@ -133,7 +137,7 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     // on a reconnect that didn't need it just opens and immediately closes
     // a redundant stream rather than duplicating output.
     containers::spawn_run_log_pump(
-        &state.agent_link(),
+        &state.agent_link_for(app.host_id),
         container_name,
         deployment_logs::LogTarget {
             path: state.deployment_log_path(&app.id, &deployment_id, deployment_logs::LogKind::Run),

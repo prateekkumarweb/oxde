@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ApiError } from "@/lib/auth";
-import { useCreateApp } from "@/lib/queries";
+import { useCreateApp, useHosts } from "@/lib/queries";
 import { isOneOf } from "@/lib/utils";
 
 type GitMode = GitDeployMode["type"];
@@ -35,7 +35,9 @@ const RUN_IMAGE_LABELS: Record<RunImage, string> = { node24: "node:24", python31
 
 export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const createApp = useCreateApp();
+  const { data: hosts } = useHosts(true);
   const [name, setName] = useState("");
+  const [hostId, setHostId] = useState("");
   const [source, setSource] = useState<Source>("upload");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("");
@@ -94,11 +96,17 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
       .map((envVar) => ({ key: envVar.key.trim(), value: envVar.value }))
       .filter((envVar) => envVar.key !== "");
     try {
-      await createApp.mutateAsync({ name, source: appSource, env_vars: trimmedEnvVars });
+      await createApp.mutateAsync({
+        name,
+        host_id: Number(hostId),
+        source: appSource,
+        env_vars: trimmedEnvVars,
+      });
     } catch {
       return;
     }
     setName("");
+    setHostId("");
     setRepoUrl("");
     setBranch("");
     setGitMode("static");
@@ -129,6 +137,34 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
               pattern="[a-z0-9-]+"
               required
             />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label>Host</Label>
+            {hosts && hosts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No hosts paired yet - create one on the{" "}
+                <a href="/hosts" className="underline">
+                  Hosts
+                </a>{" "}
+                page first.
+              </p>
+            ) : (
+              <Select value={hostId} onValueChange={(value) => setHostId(value ?? "")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue>
+                    {(value: string) => hosts?.find((host) => String(host.id) === value)?.name}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {hosts?.map((host) => (
+                    <SelectItem key={host.id} value={String(host.id)}>
+                      {host.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -311,7 +347,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
           )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" disabled={pending} className="self-start">
+          <Button type="submit" disabled={pending || hostId === ""} className="self-start">
             {pending ? "Creating…" : "Create app"}
           </Button>
         </form>

@@ -65,6 +65,11 @@ impl AppState {
         self.inner.agent_registry.any()
     }
 
+    /// An app's specific host's link - see `AgentRegistry::for_host`.
+    pub fn agent_link_for(&self, host_id: i64) -> AgentLink {
+        self.inner.agent_registry.for_host(host_id)
+    }
+
     pub fn agent_registry(&self) -> &AgentRegistry {
         &self.inner.agent_registry
     }

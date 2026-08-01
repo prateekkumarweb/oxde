@@ -86,8 +86,12 @@ export function useCreateApp() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { name: string; source?: AppSource; env_vars?: EnvVar[] }) =>
-      api.createApp(input),
+    mutationFn: (input: {
+      name: string;
+      host_id: number;
+      source?: AppSource;
+      env_vars?: EnvVar[];
+    }) => api.createApp(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appsKey() }),
   });
 }
@@ -112,6 +116,15 @@ export function useRenameApp(id: string) {
       void queryClient.invalidateQueries({ queryKey: appsKey() });
       void queryClient.invalidateQueries({ queryKey: appKey(id) });
     },
+  });
+}
+
+export function useUpdateAppHost(id: string) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: number) => api.updateApp(id, { host_id: hostId }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(id) }),
   });
 }
 

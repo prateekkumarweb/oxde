@@ -143,23 +143,10 @@ async fn sweep_orphaned_deployment_dirs(
 
 /// The agent-content counterpart to `sweep_orphaned_dirs`, run
 /// independently since the hub's own (log-only) tree and the agent's
-/// (run-mode `files/`) tree are swept separately. Best-effort, not
-/// propagated as a startup failure the way `sweep_orphaned_dirs` is - the
-/// agent may not be connected yet at hub startup, and that isn't fatal.
+/// (run-mode `files/`) tree are swept separately. Runs against every
+/// connected host - no single `host_id` to route by here. Best-effort,
+/// not a startup failure - a host may not be connected yet.
 pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
-    let agent_deployment_ids = match crate::agent_fs::list_deployment_dirs(&state.agent_link())
-        .await
-    {
-        Ok(ids) => ids,
-        Err(err) => {
-            tracing::warn!(error = %err, "skipping agent orphan sweep - could not list agent deployment dirs");
-            return;
-        }
-    };
-    if agent_deployment_ids.is_empty() {
-        return;
-    }
-
     let mut db = state.db().clone();
     let valid_deployment_ids: HashSet<Uuid> = match DbDeployment::all().exec(&mut db).await {
         Ok(rows) => rows
@@ -169,6 +156,25 @@ pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
             .collect(),
         Err(err) => {
             tracing::warn!(error = ?err, "skipping agent orphan sweep - could not list deployments");
+            return;
+        }
+    };
+
+    for (host_id, agent_link) in state.agent_registry().connected() {
+        sweep_agent_orphaned_deployment_dirs_on_host(host_id, &agent_link, &valid_deployment_ids)
+            .await;
+    }
+}
+
+async fn sweep_agent_orphaned_deployment_dirs_on_host(
+    host_id: i64,
+    agent_link: &crate::agent_link::AgentLink,
+    valid_deployment_ids: &HashSet<Uuid>,
+) {
+    let agent_deployment_ids = match crate::agent_fs::list_deployment_dirs(agent_link).await {
+        Ok(ids) => ids,
+        Err(err) => {
+            tracing::warn!(error = %err, host_id, "skipping agent orphan sweep - could not list agent deployment dirs");
             return;
         }
     };
@@ -183,17 +189,16 @@ pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
         }
         tracing::warn!(
             deployment_id = %id,
+            host_id,
             "removing orphaned agent-side deployment directory with no matching run-mode Deployment row"
         );
-        if let Err(err) =
-            crate::agent_fs::delete_deployment_dir(&state.agent_link(), &deployment_id).await
-        {
-            tracing::error!(error = %err, deployment_id = %id, "failed to remove orphaned agent-side deployment directory");
+        if let Err(err) = crate::agent_fs::delete_deployment_dir(agent_link, &deployment_id).await {
+            tracing::error!(error = %err, deployment_id = %id, host_id, "failed to remove orphaned agent-side deployment directory");
             continue;
         }
         removed += 1;
     }
-    tracing::info!(removed, "agent orphan sweep complete");
+    tracing::info!(removed, host_id, "agent orphan sweep complete");
 }
 
 async fn find_app_row(db: &mut Db, name: &str) -> AppResult<DbApp> {
@@ -458,10 +463,26 @@ fn app_from_row(row: DbApp, permissions: Vec<AppPermission>) -> AppResult<App> {
         name: row.name,
         created_at: Timestamp::from_second(row.created_at)?,
         updated_at: Timestamp::from_second(row.updated_at)?,
+        host_id: row.host_id,
         source: serde_json::from_str(&row.source_json)?,
         env_vars: serde_json::from_str(&row.env_vars_json)?,
         permissions,
     })
+}
+
+/// Rejects an unknown or revoked host - assigning an app to one would
+/// silently route its commands nowhere.
+async fn validate_host_id(db: &mut Db, host_id: i64) -> AppResult<()> {
+    let host = DbHost::all()
+        .filter(DbHost::fields().id().eq(host_id))
+        .first()
+        .exec(db)
+        .await?
+        .ok_or(AppError::HostNotFound)?;
+    if host.revoked {
+        return Err(AppError::HostNotFound);
+    }
+    Ok(())
 }
 
 async fn app_from_row_with_permissions(db: &mut Db, row: DbApp) -> AppResult<App> {
@@ -509,6 +530,7 @@ pub async fn create_app(
     source: AppSource,
     env_vars: Vec<EnvVar>,
     creator: Option<&str>,
+    host_id: i64,
 ) -> AppResult<App> {
     validate_slug(name)?;
     validate_env_vars(&env_vars)?;
@@ -533,6 +555,7 @@ pub async fn create_app(
         {
             return Err(AppError::AppAlreadyExists(name.to_string()));
         }
+        validate_host_id(&mut db, host_id).await?;
         let creator_id = match creator {
             Some(username) => Some(find_user_id(&mut db, username).await?),
             None => None,
@@ -554,6 +577,7 @@ pub async fn create_app(
             .name(name)
             .source_json(serde_json::to_string(&source)?)
             .env_vars_json(serde_json::to_string(&env_vars)?)
+            .host_id(host_id)
             .created_at(now)
             .updated_at(now)
             .exec(&mut tx)
@@ -614,12 +638,16 @@ pub async fn update_app(
     app_id: &str,
     name: Option<&str>,
     env_vars: Option<Vec<EnvVar>>,
+    host_id: Option<i64>,
 ) -> AppResult<App> {
     if let Some(env_vars) = &env_vars {
         validate_env_vars(env_vars)?;
     }
     let mut db = state.db().clone();
     let mut row = find_app_row_by_id(&mut db, app_id).await?;
+    if let Some(host_id) = host_id {
+        validate_host_id(&mut db, host_id).await?;
+    }
 
     if let Some(name) = name
         && name != row.name.as_str()
@@ -643,6 +671,9 @@ pub async fn update_app(
     }
     if let Some(env_vars) = env_vars {
         update = update.env_vars_json(serde_json::to_string(&env_vars)?);
+    }
+    if let Some(host_id) = host_id {
+        update = update.host_id(host_id);
     }
     update.exec(&mut db).await?;
 
@@ -960,9 +991,10 @@ pub async fn ship_run_deployment_to_agent(
     crate::agent_fs::zip_dir(&files_dir, &zip_path)?;
 
     let result = async {
-        crate::agent_fs::create_deployment_dir(&state.agent_link(), deployment_id).await?;
+        let agent_link = state.agent_link_for(app_row.host_id);
+        crate::agent_fs::create_deployment_dir(&agent_link, deployment_id).await?;
         crate::agent_fs::upload_zip_and_extract(
-            &state.agent_link(),
+            &agent_link,
             deployment_id,
             &zip_path,
             state.max_uncompressed_bytes(),
@@ -1191,6 +1223,16 @@ mod tests {
         )
     }
 
+    /// Every `App` needs a real `host_id` now - a fresh `Host` row per
+    /// test, same as `test_state` gives each test its own tempdir.
+    async fn test_host_id(state: &AppState) -> i64 {
+        create_host(state, "test-host")
+            .await
+            .expect("create_host")
+            .0
+            .id
+    }
+
     fn tiny_zip(content: &[u8]) -> Vec<u8> {
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         writer
@@ -1203,8 +1245,9 @@ mod tests {
     #[tokio::test]
     async fn create_list_get_app_round_trip() {
         let state = test_state("round-trip").await;
+        let host_id = test_host_id(&state).await;
 
-        let created = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let created = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
         assert_eq!(created.name, "blog");
@@ -1220,11 +1263,12 @@ mod tests {
     #[tokio::test]
     async fn duplicate_create_is_rejected_and_leaves_tmp_clean() {
         let state = test_state("duplicate-create").await;
-        create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("first create_app");
 
-        let err = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let err = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect_err("duplicate create must fail");
         assert!(matches!(err, AppError::AppAlreadyExists(_)));
@@ -1241,7 +1285,8 @@ mod tests {
     #[tokio::test]
     async fn delete_app_removes_it() {
         let state = test_state("delete-app").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1256,7 +1301,8 @@ mod tests {
     #[tokio::test]
     async fn delete_app_cascades_to_its_deployments() {
         let state = test_state("delete-app-cascade").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1297,7 +1343,8 @@ mod tests {
     #[tokio::test]
     async fn deployment_lifecycle_activate_and_delete() {
         let state = test_state("deployment-lifecycle").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1353,14 +1400,15 @@ mod tests {
     #[tokio::test]
     async fn rename_app_updates_name_and_rejects_collisions() {
         let state = test_state("rename-app").await;
-        let blog = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let blog = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
-        create_app(&state, "wiki", AppSource::Upload, Vec::new(), None)
+        create_app(&state, "wiki", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create second app");
 
-        let renamed = update_app(&state, &blog.id, Some("journal"), None)
+        let renamed = update_app(&state, &blog.id, Some("journal"), None, None)
             .await
             .expect("rename");
         assert_eq!(renamed.name, "journal");
@@ -1370,7 +1418,7 @@ mod tests {
             .expect("get_app_by_id");
         assert_eq!(fetched.name, "journal");
 
-        let err = update_app(&state, &blog.id, Some("wiki"), None)
+        let err = update_app(&state, &blog.id, Some("wiki"), None, None)
             .await
             .expect_err("renaming to an existing name must be rejected");
         assert!(matches!(err, AppError::AppAlreadyExists(_)));
@@ -1379,7 +1427,8 @@ mod tests {
     #[tokio::test]
     async fn sweep_tmp_dir_finishes_an_interrupted_delete() {
         let state = test_state("sweep-recovery").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1429,7 +1478,8 @@ mod tests {
     #[tokio::test]
     async fn sweep_orphaned_dirs_removes_dirs_with_no_matching_db_row() {
         let state = test_state("sweep-orphans").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1477,7 +1527,8 @@ mod tests {
     #[tokio::test]
     async fn create_git_deployment_on_upload_app_is_rejected() {
         let state = test_state("git-not-sourced").await;
-        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None)
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
             .await
             .expect("create_app");
 
@@ -1490,6 +1541,7 @@ mod tests {
     #[tokio::test]
     async fn create_pending_git_deployment_is_rejected_while_one_is_already_pending() {
         let state = test_state("git-deploy-in-progress").await;
+        let host_id = test_host_id(&state).await;
         let app = create_app(
             &state,
             "site",
@@ -1500,6 +1552,7 @@ mod tests {
             }),
             Vec::new(),
             None,
+            host_id,
         )
         .await
         .expect("create_app");

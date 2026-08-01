@@ -32,6 +32,7 @@ pub struct App {
     pub name: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    pub host_id: i64,
     #[serde(default)]
     pub source: AppSource,
     /// Injected into run-mode containers and install/build commands.

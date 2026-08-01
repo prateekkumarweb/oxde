@@ -102,6 +102,7 @@ pub struct AppView {
     pub(crate) created_at: jiff::Timestamp,
     pub(crate) updated_at: jiff::Timestamp,
     pub(crate) active_deployment_id: Option<String>,
+    pub(crate) host_id: i64,
     pub(crate) source: AppSource,
     pub(crate) env_vars: Vec<EnvVar>,
     pub(crate) permissions: Vec<AppPermission>,
@@ -115,6 +116,7 @@ pub async fn app_view(state: &AppState, app: oxde_models::App) -> AppView {
         created_at: app.created_at,
         updated_at: app.updated_at,
         active_deployment_id,
+        host_id: app.host_id,
         source: app.source,
         env_vars: app.env_vars,
         permissions: app.permissions,
@@ -149,12 +151,13 @@ pub enum ContainerStatus {
 pub async fn deployment_view(
     state: &AppState,
     active_id: Option<&str>,
+    host_id: i64,
     deployment: Deployment,
 ) -> DeploymentView {
     let is_active = active_id == Some(deployment.id.as_str());
     let container_status = match &deployment.container_name {
         Some(container_name) => Some(
-            match containers::is_running(&state.agent_link(), container_name).await {
+            match containers::is_running(&state.agent_link_for(host_id), container_name).await {
                 Ok(true) => ContainerStatus::Running,
                 Ok(false) => ContainerStatus::Stopped,
                 Err(_) => ContainerStatus::Unknown,
@@ -172,6 +175,7 @@ pub async fn deployment_view(
 #[derive(Deserialize)]
 struct CreateAppRequest {
     name: String,
+    host_id: i64,
     #[serde(default)]
     source: AppSource,
     #[serde(default)]
@@ -182,6 +186,7 @@ struct CreateAppRequest {
 struct UpdateAppRequest {
     name: Option<String>,
     env_vars: Option<Vec<EnvVar>>,
+    host_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -214,7 +219,15 @@ async fn create_app(
     // `Member` would otherwise be immediately locked out of what they made.
     let creator =
         matches!(current_user.role, AccountRole::Member).then_some(current_user.username.as_str());
-    let app = storage::create_app(&state, &body.name, body.source, body.env_vars, creator).await?;
+    let app = storage::create_app(
+        &state,
+        &body.name,
+        body.source,
+        body.env_vars,
+        creator,
+        body.host_id,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(app_view(&state, app).await)))
 }
 
@@ -231,7 +244,14 @@ async fn update_app(
     Path(id): Path<String>,
     Json(body): Json<UpdateAppRequest>,
 ) -> AppResult<Json<AppView>> {
-    let app = storage::update_app(&state, &id, body.name.as_deref(), body.env_vars).await?;
+    let app = storage::update_app(
+        &state,
+        &id,
+        body.name.as_deref(),
+        body.env_vars,
+        body.host_id,
+    )
+    .await?;
     Ok(Json(app_view(&state, app).await))
 }
 
@@ -259,9 +279,11 @@ async fn delete_app(
 /// checked for all of them rather than assumed) before removing the app, so
 /// deleting a run-mode app never leaves an orphaned container behind.
 pub async fn delete_app_with_containers(state: &AppState, app_id: &str) -> AppResult<()> {
+    let app = storage::get_app_by_id(state, app_id).await?;
     for deployment in storage::list_deployments(state, app_id).await? {
         if let Some(container_name) = &deployment.container_name {
-            containers::stop_and_remove(&state.agent_link(), container_name, false).await?;
+            containers::stop_and_remove(&state.agent_link_for(app.host_id), container_name, false)
+                .await?;
         }
     }
     storage::delete_app(state, app_id).await
@@ -372,7 +394,7 @@ async fn execute_git_deployment(
             registry: state.log_registry().clone(),
         };
         if let Err(err) = containers::run_build_command(
-            &state.agent_link(),
+            &state.agent_link_for(app.host_id),
             &container_name,
             &checkout_dir,
             containers::BuildCommandConfig {
@@ -438,7 +460,7 @@ pub async fn activate_with_containers(
             registry: state.log_registry().clone(),
         });
         containers::start(
-            &state.agent_link(),
+            &state.agent_link_for(app.host_id),
             deployment_id,
             &container_name,
             run_config,
@@ -449,7 +471,7 @@ pub async fn activate_with_containers(
         .await?;
 
         containers::spawn_run_log_pump(
-            &state.agent_link(),
+            &state.agent_link_for(app.host_id),
             &container_name,
             LogTarget {
                 path: state.deployment_log_path(&app.id, deployment_id, LogKind::Run),
@@ -463,8 +485,12 @@ pub async fn activate_with_containers(
             && previous_id != deployment_id
             && let Ok(previous) = storage::get_deployment(state, app_id, &previous_id).await
             && let Some(previous_container) = &previous.container_name
-            && let Err(err) =
-                containers::stop_and_remove(&state.agent_link(), previous_container, false).await
+            && let Err(err) = containers::stop_and_remove(
+                &state.agent_link_for(app.host_id),
+                previous_container,
+                false,
+            )
+            .await
         {
             tracing::warn!(error = %err, app_id, "failed to stop previous container during activate");
         }
@@ -484,6 +510,7 @@ pub async fn delete_deployment_with_containers(
     app_id: &str,
     deployment_id: &str,
 ) -> AppResult<()> {
+    let app = storage::get_app_by_id(state, app_id).await?;
     let container_name = storage::get_deployment(state, app_id, deployment_id)
         .await
         .ok()
@@ -492,8 +519,9 @@ pub async fn delete_deployment_with_containers(
     storage::delete_deployment(state, app_id, deployment_id).await?;
 
     if let Some(container_name) = container_name {
-        containers::stop_and_remove(&state.agent_link(), &container_name, false).await?;
-        crate::agent_fs::delete_deployment_dir(&state.agent_link(), deployment_id).await?;
+        let agent_link = state.agent_link_for(app.host_id);
+        containers::stop_and_remove(&agent_link, &container_name, false).await?;
+        crate::agent_fs::delete_deployment_dir(&agent_link, deployment_id).await?;
     }
     Ok(())
 }
@@ -531,10 +559,11 @@ async fn list_deployments(
     State(state): State<AppState>,
     Path(app_id): Path<String>,
 ) -> AppResult<Json<Vec<DeploymentView>>> {
+    let app = storage::get_app_by_id(&state, &app_id).await?;
     let active_id = storage::active_deployment_id(&state, &app_id).await;
     let mut views = Vec::new();
     for deployment in storage::list_deployments(&state, &app_id).await? {
-        views.push(deployment_view(&state, active_id.as_deref(), deployment).await);
+        views.push(deployment_view(&state, active_id.as_deref(), app.host_id, deployment).await);
     }
     Ok(Json(views))
 }
@@ -602,14 +631,16 @@ async fn deployment_stats(
     State(state): State<AppState>,
     Path((app_id, id)): Path<(String, String)>,
 ) -> AppResult<Json<Option<containers::ContainerStats>>> {
+    let app = storage::get_app_by_id(&state, &app_id).await?;
     let deployment = storage::get_deployment(&state, &app_id, &id).await?;
     let Some(container_name) = deployment.container_name else {
         return Ok(Json(None));
     };
-    if !containers::is_running(&state.agent_link(), &container_name).await? {
+    let agent_link = state.agent_link_for(app.host_id);
+    if !containers::is_running(&agent_link, &container_name).await? {
         return Ok(Json(None));
     }
-    let container_stats = containers::stats(&state.agent_link(), &container_name).await?;
+    let container_stats = containers::stats(&agent_link, &container_name).await?;
     Ok(Json(Some(container_stats)))
 }
 

@@ -30,6 +30,7 @@ struct AppIdParams {
 #[derive(Deserialize, JsonSchema)]
 struct CreateAppParams {
     name: String,
+    host_id: i64,
     #[serde(default)]
     source: AppSource,
     #[serde(default)]
@@ -120,6 +121,7 @@ impl OxdeMcpServer {
             params.source,
             params.env_vars,
             creator,
+            params.host_id,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -161,7 +163,10 @@ impl OxdeMcpServer {
             .await
             .map_err(|e| e.to_string())?
         {
-            views.push(api::deployment_view(&self.state, active_id.as_deref(), deployment).await);
+            views.push(
+                api::deployment_view(&self.state, active_id.as_deref(), app.host_id, deployment)
+                    .await,
+            );
         }
         json_text(&views)
     }
@@ -263,13 +268,14 @@ impl OxdeMcpServer {
         let Some(container_name) = deployment.container_name else {
             return json_text(&Option::<containers::ContainerStats>::None);
         };
-        if !containers::is_running(&self.state.agent_link(), &container_name)
+        let agent_link = self.state.agent_link_for(app.host_id);
+        if !containers::is_running(&agent_link, &container_name)
             .await
             .map_err(|e| e.to_string())?
         {
             return json_text(&Option::<containers::ContainerStats>::None);
         }
-        let stats = containers::stats(&self.state.agent_link(), &container_name)
+        let stats = containers::stats(&agent_link, &container_name)
             .await
             .map_err(|e| e.to_string())?;
         json_text(&Some(stats))

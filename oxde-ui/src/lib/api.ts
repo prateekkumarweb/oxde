@@ -21,6 +21,7 @@ import { useAuth } from "@/lib/auth";
 
 interface CreateAppInput {
   name: string;
+  host_id: number;
   source?: AppSource;
   env_vars?: EnvVar[];
 }
@@ -45,6 +46,7 @@ interface CreateApiTokenInput {
 interface UpdateAppInput {
   name?: string;
   env_vars?: EnvVar[];
+  host_id?: number;
 }
 
 interface Api {

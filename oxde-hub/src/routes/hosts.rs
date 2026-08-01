@@ -57,11 +57,12 @@ pub fn router() -> Router<AppState> {
         .route("/{id}", delete(revoke_host))
 }
 
+/// Any authenticated user, not just admins - a `Member` needs this list to
+/// pick a `host_id`. Creating/revoking a host stays admin-only below.
 async fn list_hosts(
     State(state): State<AppState>,
-    current_user: CurrentUser,
+    _current_user: CurrentUser,
 ) -> AppResult<Json<Vec<HostView>>> {
-    current_user.require_admin()?;
     let hosts = storage::list_hosts(&state).await?;
     Ok(Json(hosts.into_iter().map(host_view).collect()))
 }

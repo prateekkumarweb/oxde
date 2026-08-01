@@ -19,3 +19,8 @@ snapshot_name = "0002_snapshot.toml"
 id = 2059858138358139711
 name = "0003_add_hosts.sql"
 snapshot_name = "0003_snapshot.toml"
+
+[[migrations]]
+id = 7681455421660324928
+name = "0004_add_app_host_id.sql"
+snapshot_name = "0004_snapshot.toml"

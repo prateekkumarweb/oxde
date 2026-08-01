@@ -11,6 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,8 +36,10 @@ import {
   useDeleteDeployment,
   useDeployFromGit,
   useDeployments,
+  useHosts,
   useRenameApp,
   useUpdateAppEnvVars,
+  useUpdateAppHost,
   useUpdateAppPermissions,
   useUploadDeployment,
 } from "@/lib/queries";
@@ -84,6 +93,8 @@ function AppDetail() {
   const updateAppEnvVars = useUpdateAppEnvVars(appId ?? "");
   const updateAppPermissions = useUpdateAppPermissions(appId ?? "");
   const renameApp = useRenameApp(appId ?? "");
+  const updateAppHost = useUpdateAppHost(appId ?? "");
+  const { data: hosts } = useHosts(true);
   const { user } = useAuth();
 
   const [actionError, setActionError] = useState<string | null>(null);
@@ -181,6 +192,13 @@ function AppDetail() {
       setRenaming(false);
       await navigate({ to: "/apps/$name", params: { name: renamed.name } });
     });
+  }
+
+  async function handleChangeHost(hostId: string | null) {
+    if (hostId === null) {
+      return;
+    }
+    await runAction(() => updateAppHost.mutateAsync(Number(hostId)));
   }
 
   const error =
@@ -495,6 +513,27 @@ function AppDetail() {
                   </Button>
                 </div>
               )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Host</Label>
+              <Select
+                value={String(app.host_id)}
+                onValueChange={handleChangeHost}
+                disabled={updateAppHost.isPending}
+              >
+                <SelectTrigger className="w-full max-w-xs">
+                  <SelectValue>
+                    {(value: string) => hosts?.find((host) => String(host.id) === value)?.name}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {hosts?.map((host) => (
+                    <SelectItem key={host.id} value={String(host.id)}>
+                      {host.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </Section>
 

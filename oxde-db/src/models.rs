@@ -33,6 +33,9 @@ pub struct App {
     /// read/written as a whole list, never filtered by individual key.
     pub env_vars_json: String,
     pub active_deployment_id: Option<uuid::Uuid>,
+    /// The agent that runs this app's containers/content.
+    #[index]
+    pub host_id: i64,
     pub created_at: i64,
     pub updated_at: i64,
     #[has_many]

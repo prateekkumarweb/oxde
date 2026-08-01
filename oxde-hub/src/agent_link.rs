@@ -236,8 +236,9 @@ impl AgentRegistry {
         self.hosts.pin().remove(&host_id);
     }
 
-    /// "The" one connected host - no per-app routing yet. Falls back to a
-    /// disconnected stand-in (`AgentUnavailable` on every call) if none.
+    /// "The" one connected host, for callers with no specific `host_id` to
+    /// target. Falls back to a disconnected stand-in (`AgentUnavailable`
+    /// on every call) if none is connected.
     pub fn any(&self) -> AgentLink {
         self.hosts
             .pin()
@@ -245,5 +246,26 @@ impl AgentRegistry {
             .next()
             .cloned()
             .unwrap_or_else(AgentLink::new)
+    }
+
+    /// `App.host_id` resolved to a link - a disconnected host falls back
+    /// to the same stand-in `any()` returns for "nothing connected".
+    pub fn for_host(&self, host_id: i64) -> AgentLink {
+        self.hosts
+            .pin()
+            .get(&host_id)
+            .cloned()
+            .unwrap_or_else(AgentLink::new)
+    }
+
+    /// A snapshot of every currently-connected `(host_id, AgentLink)` pair,
+    /// for operations that must reach every connected agent rather than
+    /// one app's (e.g. the orphan sweep).
+    pub fn connected(&self) -> Vec<(i64, AgentLink)> {
+        self.hosts
+            .pin()
+            .iter()
+            .map(|(id, link)| (*id, link.clone()))
+            .collect()
     }
 }
