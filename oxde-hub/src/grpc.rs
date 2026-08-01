@@ -14,9 +14,10 @@ use tonic::{
     transport::{Identity, Server, ServerTlsConfig},
 };
 
-use crate::agent_link::AgentLink;
+use crate::{agent_link::AgentLink, api_tokens, state::AppState, storage};
 
 struct Hub {
+    state: AppState,
     agent_link: AgentLink,
     /// Signaled once per `Session` connection, after `set_outbound` so the
     /// agent is already callable - lets `main.rs` re-run agent-dependent
@@ -38,12 +39,18 @@ impl HubService for Hub {
         &self,
         request: Request<Streaming<SessionRequest>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
+        let host = authenticate(&self.state, &request).await?;
+
         let mut incoming = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         self.agent_link.set_outbound(tx).await;
         // A full connected_tx channel just means a reconciliation run is
         // already pending or in progress - nothing new to signal.
         let _ = self.connected_tx.try_send(());
+
+        if let Err(err) = storage::touch_host_last_seen(&self.state, host.id).await {
+            tracing::warn!(error = ?err, host_id = host.id, "failed to record host last_seen_at");
+        }
 
         let agent_link = self.agent_link.clone();
         tokio::spawn(async move {
@@ -58,11 +65,38 @@ impl HubService for Hub {
     }
 }
 
+/// Verifies the `authorization: Bearer <token>` metadata against a `Host`
+/// row, the same scheme `find_user_by_api_token` uses for API tokens.
+async fn authenticate(
+    state: &AppState,
+    request: &Request<Streaming<SessionRequest>>,
+) -> Result<oxde_db::models::Host, Status> {
+    let header = request
+        .metadata()
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| Status::unauthenticated("missing authorization metadata"))?;
+    let bearer = header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| Status::unauthenticated("malformed authorization metadata"))?;
+    let (token_id, secret) = api_tokens::parse_bearer_value(bearer)
+        .ok_or_else(|| Status::unauthenticated("malformed agent token"))?;
+
+    storage::find_host_by_token(state, token_id, secret)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = ?err, "failed to look up host by token");
+            Status::internal("failed to authenticate agent")
+        })?
+        .ok_or_else(|| Status::unauthenticated("unknown or revoked agent token"))
+}
+
 /// Spawned alongside the HTTP server so an agent can dial in and confirm
 /// it's talking to a live hub. `connected_tx` is signaled on every
 /// connection (see `Hub::session`). `identity` is the self-signed cert
 /// the agent pins by fingerprint (see `agent_tls.rs`).
 pub async fn serve(
+    state: AppState,
     agent_link: AgentLink,
     connected_tx: mpsc::Sender<()>,
     identity: Identity,
@@ -72,6 +106,7 @@ pub async fn serve(
     Server::builder()
         .tls_config(ServerTlsConfig::new().identity(identity))?
         .add_service(HubServiceServer::new(Hub {
+            state,
             agent_link,
             connected_tx,
         }))
@@ -88,18 +123,59 @@ mod tests {
     };
     use rcgen::{CertifiedKey, generate_simple_self_signed};
     use tokio::sync::{mpsc, oneshot};
+    use tokio_stream::wrappers::ReceiverStream;
     use tonic::transport::{Certificate, Channel, ClientTlsConfig, server::TcpIncoming};
 
     use super::*;
+    use crate::{
+        agent_link::AgentLink,
+        state::{AppState, AppStateLimits},
+        storage,
+    };
 
     const TEST_TLS_SUBJECT: &str = "oxde-agent-link-test";
 
-    /// Starts a real, TLS-enabled hub gRPC server on an ephemeral port
-    /// over its own fresh `AgentLink`, returning that link (for the test
-    /// to drive as the hub side), the address to dial, and the self-signed
-    /// cert a fake agent needs to trust to connect.
-    fn spawn_test_hub() -> (AgentLink, String, Certificate) {
+    /// A fresh `AppState` over its own tempdir, so tests never share state.
+    async fn test_state(label: &str) -> AppState {
+        let dir = std::env::temp_dir().join(format!(
+            "oxde-test-grpc-{label}-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        std::fs::create_dir_all(dir.join("apps")).expect("create apps dir");
+        std::fs::create_dir_all(dir.join("tmp")).expect("create tmp dir");
+        let db = oxde_db::connect(&dir).await.expect("connect test database");
+        oxde_db::apply_migrations(&db)
+            .await
+            .expect("apply test database migrations");
+        AppState::new(
+            dir,
+            AppStateLimits {
+                max_upload_bytes: 10_000,
+                max_uncompressed_bytes: 10_000,
+                base_domain: "localhost".to_string(),
+                git_fetch_timeout_secs: 60,
+                install_timeout_secs: 300,
+                build_timeout_secs: 300,
+                api_token_max_expiry_days: 30,
+                enable_mcp: false,
+            },
+            crate::reverse_proxy::new_client(),
+            db,
+            AgentLink::new(),
+        )
+    }
+
+    /// Starts a real, TLS-enabled hub gRPC server with a `Host` row a fake
+    /// agent can authenticate as. Returns the `AgentLink` (for the test to
+    /// drive as the hub side), the dial address, the cert to trust, and
+    /// the host's plaintext token.
+    async fn spawn_test_hub() -> (AgentLink, String, Certificate, String) {
         let _ = rustls::crypto::ring::default_provider().install_default();
+        let state = test_state("hub").await;
+        let (_, token) = storage::create_host(&state, "test-agent")
+            .await
+            .expect("create_host");
         let agent_link = AgentLink::new();
         let incoming = TcpIncoming::bind("127.0.0.1:0".parse().expect("addr")).expect("bind");
         let addr = incoming.local_addr().expect("local_addr");
@@ -117,6 +193,7 @@ mod tests {
                 .tls_config(ServerTlsConfig::new().identity(identity))
                 .expect("tls_config")
                 .add_service(HubServiceServer::new(Hub {
+                    state,
                     agent_link: server_link,
                     connected_tx,
                 }))
@@ -125,7 +202,7 @@ mod tests {
                 .expect("serve");
         });
 
-        (agent_link, format!("https://{addr}"), ca_cert)
+        (agent_link, format!("https://{addr}"), ca_cert, token)
     }
 
     /// Trusts exactly the cert `spawn_test_hub` generated - fingerprint
@@ -148,19 +225,35 @@ mod tests {
         HubServiceClient::new(channel)
     }
 
+    /// Attaches `token` as `authorization: Bearer <token>` metadata, the
+    /// same way the real agent authenticates on `Session`.
+    fn session_request(
+        outbound: ReceiverStream<SessionRequest>,
+        token: &str,
+    ) -> Request<ReceiverStream<SessionRequest>> {
+        let mut request = Request::new(outbound);
+        request.metadata_mut().insert(
+            "authorization",
+            format!("Bearer {token}")
+                .parse()
+                .expect("valid header value"),
+        );
+        request
+    }
+
     /// Proves `call_chunked`'s "hub sends N, agent replies once" half: a
     /// fake agent accumulates `EchoUpload` chunks until one is marked
     /// final, then replies with the total byte count received.
     #[tokio::test]
     async fn call_chunked_delivers_every_chunk_before_the_single_reply() {
-        let (agent_link, hub_addr, ca_cert) = spawn_test_hub();
+        let (agent_link, hub_addr, ca_cert, token) = spawn_test_hub().await;
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
             let mut client = connect_test_client(hub_addr, ca_cert).await;
             let (tx, rx) = mpsc::channel(16);
             let mut inbound = client
-                .session(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .session(session_request(ReceiverStream::new(rx), &token))
                 .await
                 .expect("open session")
                 .into_inner();
@@ -220,14 +313,14 @@ mod tests {
     /// run of `EchoStreamChunk` replies, the last marked final.
     #[tokio::test]
     async fn call_streaming_reply_delivers_every_chunk_the_agent_sends() {
-        let (agent_link, hub_addr, ca_cert) = spawn_test_hub();
+        let (agent_link, hub_addr, ca_cert, token) = spawn_test_hub().await;
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
             let mut client = connect_test_client(hub_addr, ca_cert).await;
             let (tx, rx) = mpsc::channel(16);
             let mut inbound = client
-                .session(tokio_stream::wrappers::ReceiverStream::new(rx))
+                .session(session_request(ReceiverStream::new(rx), &token))
                 .await
                 .expect("open session")
                 .into_inner();
@@ -284,5 +377,18 @@ mod tests {
         agent_link.end_stream(request_id).await;
 
         assert_eq!(received, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn session_rejects_an_invalid_token() {
+        let (_agent_link, hub_addr, ca_cert, _token) = spawn_test_hub().await;
+        let mut client = connect_test_client(hub_addr, ca_cert).await;
+        let (_tx, rx) = mpsc::channel(16);
+
+        let err = client
+            .session(session_request(ReceiverStream::new(rx), "wrong-token"))
+            .await
+            .expect_err("an invalid token must be rejected");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
     }
 }

@@ -1,6 +1,9 @@
 # Where run-mode app content and container state are stored on disk.
 data_dir = "./agent-data"
 
+# The pairing token from the hub's Hosts page (or POST /api/hosts).
+agent_token = "..."
+
 # Everything below is optional; values shown are the defaults.
 
 # The hub's host:port for the gRPC agent-link channel.

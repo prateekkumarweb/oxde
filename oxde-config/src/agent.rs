@@ -5,6 +5,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct AgentConfig {
     pub data_dir: PathBuf,
+    /// Pairing token from the hub's `POST /api/hosts`, sent as gRPC
+    /// metadata on `Session` to identify this agent as a `Host` row.
+    pub agent_token: String,
     #[serde(default = "default_hub_addr")]
     pub hub_addr: String,
     /// Pins the hub's gRPC certificate by SHA-256 fingerprint. Unset, the
@@ -33,15 +36,29 @@ mod tests {
 
     #[test]
     fn data_dir_is_required() {
-        let err = toml::from_str::<AgentConfig>("").expect_err("data_dir must be required");
+        let err = toml::from_str::<AgentConfig>(r#"agent_token = "tok""#)
+            .expect_err("data_dir must be required");
         assert!(err.to_string().contains("data_dir"));
     }
 
     #[test]
+    fn agent_token_is_required() {
+        let err = toml::from_str::<AgentConfig>(r#"data_dir = "/var/lib/oxde-agent""#)
+            .expect_err("agent_token must be required");
+        assert!(err.to_string().contains("agent_token"));
+    }
+
+    #[test]
     fn optional_fields_fall_back_to_defaults() {
-        let config: AgentConfig =
-            toml::from_str(r#"data_dir = "/var/lib/oxde-agent""#).expect("config should parse");
+        let config: AgentConfig = toml::from_str(
+            r#"
+            data_dir = "/var/lib/oxde-agent"
+            agent_token = "tok"
+            "#,
+        )
+        .expect("config should parse");
         assert_eq!(config.data_dir, PathBuf::from("/var/lib/oxde-agent"));
+        assert_eq!(config.agent_token, "tok");
         assert_eq!(config.hub_addr, default_hub_addr());
         assert_eq!(config.hub_tls_fingerprint, None);
     }
@@ -51,12 +68,14 @@ mod tests {
         let config: AgentConfig = toml::from_str(
             r#"
             data_dir = "/var/lib/oxde-agent"
+            agent_token = "tok"
             hub_addr = "hub.internal:50051"
             hub_tls_fingerprint = "abc123"
             "#,
         )
         .expect("config should parse");
         assert_eq!(config.data_dir, PathBuf::from("/var/lib/oxde-agent"));
+        assert_eq!(config.agent_token, "tok");
         assert_eq!(config.hub_addr, "hub.internal:50051");
         assert_eq!(config.hub_tls_fingerprint, Some("abc123".to_string()));
     }

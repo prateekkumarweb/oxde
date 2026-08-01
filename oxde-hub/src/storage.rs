@@ -371,6 +371,53 @@ pub async fn revoke_host(state: &AppState, host_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// Used only by `grpc.rs`'s `Session` RPC to authenticate a connecting
+/// agent.
+pub async fn find_host_by_token(
+    state: &AppState,
+    token_id: &str,
+    secret: &str,
+) -> AppResult<Option<DbHost>> {
+    let mut db = state.db().clone();
+    let Some(host) = DbHost::all()
+        .filter(DbHost::fields().token_id().eq(token_id))
+        .first()
+        .exec(&mut db)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    if host.revoked {
+        return Ok(None);
+    }
+    if !crate::api_tokens::verify_secret(secret, &host.token_hash) {
+        return Ok(None);
+    }
+
+    Ok(Some(host))
+}
+
+pub async fn touch_host_last_seen(state: &AppState, host_id: i64) -> AppResult<()> {
+    let mut db = state.db().clone();
+    let Some(mut host) = DbHost::all()
+        .filter(DbHost::fields().id().eq(host_id))
+        .first()
+        .exec(&mut db)
+        .await?
+    else {
+        return Ok(());
+    };
+
+    let now = Timestamp::now().as_second();
+    host.update()
+        .last_seen_at(now)
+        .updated_at(now)
+        .exec(&mut db)
+        .await?;
+    Ok(())
+}
+
 /// A user deleted after being granted access leaves an orphaned grant with
 /// no matching `User` row - skipped rather than failing the whole app read.
 async fn load_permissions(db: &mut Db, app_row: &DbApp) -> AppResult<Vec<AppPermission>> {
@@ -1100,8 +1147,9 @@ mod tests {
 
     use super::{
         activate_deployment, create_app, create_deployment, create_host,
-        create_pending_git_deployment, delete_app, delete_deployment, get_app, get_app_by_id,
-        list_apps, list_deployments, list_hosts, revoke_host, update_app,
+        create_pending_git_deployment, delete_app, delete_deployment, find_host_by_token, get_app,
+        get_app_by_id, list_apps, list_deployments, list_hosts, revoke_host, touch_host_last_seen,
+        update_app,
     };
     use crate::{
         agent_link::AgentLink,
@@ -1494,5 +1542,58 @@ mod tests {
             .await
             .expect_err("unknown host id must be rejected");
         assert!(matches!(err, AppError::HostNotFound));
+    }
+
+    #[tokio::test]
+    async fn find_host_by_token_accepts_a_valid_token_and_rejects_everything_else() {
+        let state = test_state("hosts-find-by-token").await;
+        let (created, plaintext) = create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+        let (token_id, secret) =
+            crate::api_tokens::parse_bearer_value(&plaintext).expect("parse plaintext token");
+
+        let found = find_host_by_token(&state, token_id, secret)
+            .await
+            .expect("find_host_by_token")
+            .expect("token should match the created host");
+        assert_eq!(found.id, created.id);
+
+        assert!(
+            find_host_by_token(&state, token_id, "wrong-secret")
+                .await
+                .expect("find_host_by_token")
+                .is_none()
+        );
+        assert!(
+            find_host_by_token(&state, "unknown-token-id", secret)
+                .await
+                .expect("find_host_by_token")
+                .is_none()
+        );
+
+        revoke_host(&state, created.id).await.expect("revoke_host");
+        assert!(
+            find_host_by_token(&state, token_id, secret)
+                .await
+                .expect("find_host_by_token")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn touch_host_last_seen_sets_the_timestamp() {
+        let state = test_state("hosts-touch-last-seen").await;
+        let (created, _) = create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+        assert_eq!(created.last_seen_at, None);
+
+        touch_host_last_seen(&state, created.id)
+            .await
+            .expect("touch_host_last_seen");
+
+        let hosts = list_hosts(&state).await.expect("list_hosts");
+        assert!(hosts[0].last_seen_at.is_some());
     }
 }

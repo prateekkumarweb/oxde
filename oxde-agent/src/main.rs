@@ -76,7 +76,14 @@ async fn main() -> anyhow::Result<()> {
 
     let (tx, rx) = mpsc::channel(16);
     let outbound = ReceiverStream::new(rx);
-    let mut inbound = client.session(outbound).await?.into_inner();
+    let mut session_request = tonic::Request::new(outbound);
+    session_request.metadata_mut().insert(
+        "authorization",
+        format!("Bearer {}", config.agent_token)
+            .parse()
+            .context("agent_token isn't a valid gRPC metadata value")?,
+    );
+    let mut inbound = client.session(session_request).await?.into_inner();
 
     let in_flight_uploads: InFlightUploads = Arc::new(Mutex::new(HashMap::new()));
 

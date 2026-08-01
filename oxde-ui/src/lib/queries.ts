@@ -14,6 +14,7 @@ const deploymentStatsKey = (id: string, deploymentId: string) =>
 const usersKey = () => ["users"] as const;
 const apiTokensKey = () => ["apiTokens"] as const;
 const hostStatsKey = () => ["host", "stats"] as const;
+const hostsKey = () => ["hosts"] as const;
 
 function appsOptions(api: Api) {
   return queryOptions({ queryKey: appsKey(), queryFn: api.listApps });
@@ -183,6 +184,32 @@ export function useRevokeApiToken() {
   return useMutation({
     mutationFn: (id: number) => api.revokeApiToken(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: apiTokensKey() }),
+  });
+}
+
+function hostsOptions(api: Api) {
+  return queryOptions({ queryKey: hostsKey(), queryFn: api.listHosts });
+}
+
+export function useHosts(enabled: boolean) {
+  return useQuery({ ...hostsOptions(useApi()), enabled });
+}
+
+export function useCreateHost() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string }) => api.createHost(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: hostsKey() }),
+  });
+}
+
+export function useRevokeHost() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.revokeHost(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: hostsKey() }),
   });
 }
 

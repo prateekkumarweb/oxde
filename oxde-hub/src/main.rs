@@ -150,8 +150,16 @@ async fn main() -> anyhow::Result<()> {
 fn spawn_grpc_and_reconciliation(state: &AppState, agent_tls_identity: tonic::transport::Identity) {
     let (agent_connected_tx, mut agent_connected_rx) = tokio::sync::mpsc::channel(1);
     let agent_link = state.agent_link().clone();
+    let grpc_state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = grpc::serve(agent_link, agent_connected_tx, agent_tls_identity).await {
+        if let Err(err) = grpc::serve(
+            grpc_state,
+            agent_link,
+            agent_connected_tx,
+            agent_tls_identity,
+        )
+        .await
+        {
             tracing::error!(error = ?err, "hub gRPC listener stopped");
         }
     });

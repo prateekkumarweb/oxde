@@ -90,8 +90,15 @@ mod tests {
         (cert_path, key_path)
     }
 
+    /// `RustlsConfig::from_pem_file` needs a crypto provider installed -
+    /// ignores the result since another test may have installed one first.
+    fn install_test_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[tokio::test]
     async fn build_rustls_config_loads_a_valid_cert_and_key() {
+        install_test_crypto_provider();
         let dir = tempdir();
         let (cert_path, key_path) = write_self_signed_cert(dir.path(), "initial");
         build_rustls_config(&cert_path, &key_path)
@@ -112,6 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_and_reload_skips_when_files_are_unchanged() {
+        install_test_crypto_provider();
         let dir = tempdir();
         let (cert_path, key_path) = write_self_signed_cert(dir.path(), "unchanged");
         let config = build_rustls_config(&cert_path, &key_path).await.unwrap();
@@ -126,6 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_and_reload_reloads_when_files_change() {
+        install_test_crypto_provider();
         let dir = tempdir();
         let (cert_path, key_path) = write_self_signed_cert(dir.path(), "before");
         let config = build_rustls_config(&cert_path, &key_path).await.unwrap();

@@ -7,9 +7,11 @@ import type {
   AppView,
   ContainerStats,
   CreateApiTokenResponse,
+  CreateHostResponse,
   DeploymentView,
   EnvVar,
   HostStats,
+  HostView,
   LogKind,
   RunConfig,
   UserView,
@@ -72,6 +74,9 @@ interface Api {
   ) => Promise<Response>;
   getDeploymentStats: (appId: string, id: string) => Promise<ContainerStats | null>;
   getHostStats: () => Promise<HostStats>;
+  listHosts: () => Promise<HostView[]>;
+  createHost: (input: { name: string }) => Promise<CreateHostResponse>;
+  revokeHost: (id: number) => Promise<void>;
 }
 
 export function useApi(): Api {
@@ -183,6 +188,17 @@ export function useApi(): Api {
         request(`/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}/stats`),
 
       getHostStats: () => request("/host/stats"),
+
+      listHosts: () => request("/hosts"),
+
+      createHost: (input) =>
+        request("/hosts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+
+      revokeHost: (id) => request(`/hosts/${id}`, { method: "DELETE" }),
     }),
     [request, requestStream],
   );
@@ -195,8 +211,10 @@ export type {
   AppView,
   ContainerStats,
   CreateApiTokenResponse,
+  CreateHostResponse,
   DeploymentView,
   HostStats,
+  HostView,
   RunConfig,
   UserView,
 };
