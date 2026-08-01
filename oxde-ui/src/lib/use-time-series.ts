@@ -12,7 +12,7 @@ interface HistoryState {
   lastUpdatedAt: number;
 }
 
-/** Keyed on `updatedAt` rather than `value` so a repeated reading still advances. */
+// Keyed on `updatedAt` rather than `value` so a repeated reading still advances.
 export function useTimeSeries(value: number | undefined, updatedAt: number): TimeSeriesPoint[] {
   const [history, setHistory] = useState<HistoryState>({ points: [], lastUpdatedAt: 0 });
 

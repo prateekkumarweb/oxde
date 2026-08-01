@@ -39,7 +39,7 @@ interface UpdateUserInput {
 
 interface CreateApiTokenInput {
   name: string;
-  /** Epoch seconds. */
+  // Epoch seconds.
   expires_at: number;
 }
 
@@ -75,10 +75,11 @@ interface Api {
     options: { phase: LogKind; follow: boolean; signal?: AbortSignal },
   ) => Promise<Response>;
   getDeploymentStats: (appId: string, id: string) => Promise<ContainerStats | null>;
-  getHostStats: () => Promise<HostStats>;
+  getHostStats: (hostId: number) => Promise<HostStats>;
   listHosts: () => Promise<HostView[]>;
   createHost: (input: { name: string }) => Promise<CreateHostResponse>;
   revokeHost: (id: number) => Promise<void>;
+  updateHostIp: (id: number, ip: string | null) => Promise<HostView>;
 }
 
 export function useApi(): Api {
@@ -189,7 +190,7 @@ export function useApi(): Api {
       getDeploymentStats: (appId, id) =>
         request(`/apps/${encodeURIComponent(appId)}/deployments/${encodeURIComponent(id)}/stats`),
 
-      getHostStats: () => request("/host/stats"),
+      getHostStats: (hostId) => request(`/hosts/${hostId}/stats`),
 
       listHosts: () => request("/hosts"),
 
@@ -201,6 +202,13 @@ export function useApi(): Api {
         }),
 
       revokeHost: (id) => request(`/hosts/${id}`, { method: "DELETE" }),
+
+      updateHostIp: (id, ip) =>
+        request(`/hosts/${id}/ip`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ip }),
+        }),
     }),
     [request, requestStream],
   );

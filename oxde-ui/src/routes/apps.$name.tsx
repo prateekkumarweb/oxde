@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, type ReactNode, useRef, useState } from "react";
 
-import type { AppPermission, EnvVar, RunImage } from "@/lib/types";
+import type { AppPermission, EnvVar, HostView, RunImage } from "@/lib/types";
 
 import { DeploymentLogs } from "@/components/deployment-logs";
 import { DeploymentStats } from "@/components/deployment-stats";
@@ -72,6 +72,19 @@ function Section({ title, children }: { title: ReactNode; children: ReactNode })
       <h2 className="border-b pb-2 font-heading text-lg font-medium">{title}</h2>
       {children}
     </section>
+  );
+}
+
+// `null` until the admin sets an IP for this host on `/hosts`.
+function AppHostIp({ hosts, hostId }: { hosts: HostView[] | undefined; hostId: number }) {
+  const host = hosts?.find((candidate) => candidate.id === hostId);
+  if (!host?.ip) {
+    return null;
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      Point a DNS record at <code>{host.ip}</code> to reach apps on this host.
+    </p>
   );
 }
 
@@ -534,6 +547,7 @@ function AppDetail() {
                   ))}
                 </SelectContent>
               </Select>
+              <AppHostIp hosts={hosts} hostId={app.host_id} />
             </div>
           </Section>
 

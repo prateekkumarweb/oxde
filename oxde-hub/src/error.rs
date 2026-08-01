@@ -47,6 +47,10 @@ pub enum AppError {
     TokenNotFound,
     #[error("host not found")]
     HostNotFound,
+    #[error("host already exists: {0}")]
+    HostAlreadyExists(String),
+    #[error("invalid host ip: {0}")]
+    InvalidHostIp(String),
     #[error("invalid credentials")]
     InvalidCredentials,
     #[error("too many failed login attempts - try again in {0} minute(s)")]
@@ -123,8 +127,10 @@ impl IntoResponse for AppError {
             Self::AppAlreadyExists(_)
             | Self::DeleteActiveDeployment
             | Self::DeploymentInProgress(_)
-            | Self::UserAlreadyExists(_) => StatusCode::CONFLICT,
+            | Self::UserAlreadyExists(_)
+            | Self::HostAlreadyExists(_) => StatusCode::CONFLICT,
             Self::InvalidName(_)
+            | Self::InvalidHostIp(_)
             | Self::InvalidRepoUrl(_)
             | Self::NotGitSourced(_)
             | Self::InvalidPublishDir(_)

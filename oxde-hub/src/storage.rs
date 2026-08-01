@@ -338,9 +338,23 @@ pub async fn find_user_by_api_token(
 }
 
 pub async fn create_host(state: &AppState, name: &str) -> AppResult<(DbHost, String)> {
+    if name.trim().is_empty() {
+        return Err(AppError::InvalidName(name.to_string()));
+    }
+
     let now = Timestamp::now().as_second();
     let (token_id, secret, token_hash) = crate::api_tokens::generate()?;
     let mut db = state.db().clone();
+    if DbHost::all()
+        .filter(DbHost::fields().name().eq(name))
+        .first()
+        .exec(&mut db)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::HostAlreadyExists(name.to_string()));
+    }
+
     let row = DbHost::create()
         .name(name)
         .token_id(&token_id)
@@ -404,7 +418,14 @@ pub async fn find_host_by_token(
     Ok(Some(host))
 }
 
-pub async fn touch_host_last_seen(state: &AppState, host_id: i64) -> AppResult<()> {
+/// `peer_ip` is the agent's raw connecting address (best-effort, from the
+/// gRPC transport) - stored as `last_connected_ip`, a suggestion for the
+/// admin-confirmed `ip` field, never used for routing itself.
+pub async fn touch_host_last_seen(
+    state: &AppState,
+    host_id: i64,
+    peer_ip: Option<String>,
+) -> AppResult<()> {
     let mut db = state.db().clone();
     let Some(mut host) = DbHost::all()
         .filter(DbHost::fields().id().eq(host_id))
@@ -416,9 +437,33 @@ pub async fn touch_host_last_seen(state: &AppState, host_id: i64) -> AppResult<(
     };
 
     let now = Timestamp::now().as_second();
+    let mut update = host.update().last_seen_at(now).updated_at(now);
+    if let Some(peer_ip) = peer_ip {
+        update = update.last_connected_ip(peer_ip);
+    }
+    update.exec(&mut db).await?;
+    Ok(())
+}
+
+/// Admin-set address for manual DNS. `None` clears it back to unset.
+pub async fn update_host_ip(state: &AppState, host_id: i64, ip: Option<String>) -> AppResult<()> {
+    if let Some(ip) = &ip
+        && ip.parse::<std::net::IpAddr>().is_err()
+    {
+        return Err(AppError::InvalidHostIp(ip.clone()));
+    }
+
+    let mut db = state.db().clone();
+    let mut host = DbHost::all()
+        .filter(DbHost::fields().id().eq(host_id))
+        .first()
+        .exec(&mut db)
+        .await?
+        .ok_or(AppError::HostNotFound)?;
+
     host.update()
-        .last_seen_at(now)
-        .updated_at(now)
+        .updated_at(Timestamp::now().as_second())
+        .ip(ip)
         .exec(&mut db)
         .await?;
     Ok(())
@@ -1182,7 +1227,7 @@ mod tests {
         activate_deployment, create_app, create_deployment, create_host,
         create_pending_git_deployment, delete_app, delete_deployment, find_host_by_token, get_app,
         get_app_by_id, list_apps, list_deployments, list_hosts, revoke_host, touch_host_last_seen,
-        update_app,
+        update_app, update_host_ip,
     };
     use crate::{
         agent_link::AgentRegistry,
@@ -1590,6 +1635,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_host_rejects_an_empty_name() {
+        let state = test_state("hosts-empty-name").await;
+        let err = create_host(&state, "  ")
+            .await
+            .expect_err("empty name must be rejected");
+        assert!(matches!(err, AppError::InvalidName(_)));
+    }
+
+    #[tokio::test]
+    async fn create_host_rejects_a_duplicate_name() {
+        let state = test_state("hosts-duplicate-name").await;
+        create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+
+        let err = create_host(&state, "raspberry-pi")
+            .await
+            .expect_err("duplicate name must be rejected");
+        assert!(matches!(err, AppError::HostAlreadyExists(_)));
+    }
+
+    #[tokio::test]
     async fn revoke_host_rejects_an_unknown_id() {
         let state = test_state("hosts-unknown").await;
         let err = revoke_host(&state, 404)
@@ -1643,11 +1710,45 @@ mod tests {
             .expect("create_host");
         assert_eq!(created.last_seen_at, None);
 
-        touch_host_last_seen(&state, created.id)
+        touch_host_last_seen(&state, created.id, Some("10.0.0.5".to_string()))
             .await
             .expect("touch_host_last_seen");
 
         let hosts = list_hosts(&state).await.expect("list_hosts");
         assert!(hosts[0].last_seen_at.is_some());
+        assert_eq!(hosts[0].last_connected_ip.as_deref(), Some("10.0.0.5"));
+    }
+
+    #[tokio::test]
+    async fn update_host_ip_sets_and_clears_the_address() {
+        let state = test_state("hosts-update-ip").await;
+        let (created, _) = create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+
+        update_host_ip(&state, created.id, Some("192.168.1.50".to_string()))
+            .await
+            .expect("update_host_ip");
+        let hosts = list_hosts(&state).await.expect("list_hosts");
+        assert_eq!(hosts[0].ip.as_deref(), Some("192.168.1.50"));
+
+        update_host_ip(&state, created.id, None)
+            .await
+            .expect("update_host_ip");
+        let hosts = list_hosts(&state).await.expect("list_hosts");
+        assert_eq!(hosts[0].ip, None);
+    }
+
+    #[tokio::test]
+    async fn update_host_ip_rejects_a_malformed_address() {
+        let state = test_state("hosts-update-ip-invalid").await;
+        let (created, _) = create_host(&state, "raspberry-pi")
+            .await
+            .expect("create_host");
+
+        let err = update_host_ip(&state, created.id, Some("not-an-ip".to_string()))
+            .await
+            .expect_err("malformed ip must be rejected");
+        assert!(matches!(err, AppError::InvalidHostIp(_)));
     }
 }

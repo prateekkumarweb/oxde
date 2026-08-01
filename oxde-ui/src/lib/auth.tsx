@@ -57,7 +57,7 @@ interface AuthContextValue {
   request: <T>(path: string, init?: RequestInit) => Promise<T>;
   requestStream: (path: string, init?: RequestInit) => Promise<Response>;
   isAuthenticated: boolean;
-  /** `null` until the initial session check (`GET /api/me`) resolves. */
+  // `null` until the initial session check (`GET /api/me`) resolves.
   user: UserView | null;
 }
 

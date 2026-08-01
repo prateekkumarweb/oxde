@@ -32,15 +32,6 @@ const RootLayout = () => {
               )}
               {user?.role === "admin" && (
                 <Link
-                  to="/host"
-                  className="text-sm text-muted-foreground hover:text-foreground"
-                  activeProps={{ className: "text-foreground" }}
-                >
-                  Host stats
-                </Link>
-              )}
-              {user?.role === "admin" && (
-                <Link
                   to="/hosts"
                   className="text-sm text-muted-foreground hover:text-foreground"
                   activeProps={{ className: "text-foreground" }}

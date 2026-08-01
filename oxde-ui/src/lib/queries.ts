@@ -13,7 +13,7 @@ const deploymentStatsKey = (id: string, deploymentId: string) =>
   ["apps", id, "deployments", deploymentId, "stats"] as const;
 const usersKey = () => ["users"] as const;
 const apiTokensKey = () => ["apiTokens"] as const;
-const hostStatsKey = () => ["host", "stats"] as const;
+const hostStatsKey = (hostId: number) => ["hosts", hostId, "stats"] as const;
 const hostsKey = () => ["hosts"] as const;
 
 function appsOptions(api: Api) {
@@ -24,9 +24,9 @@ export function useApps() {
   return useQuery(appsOptions(useApi()));
 }
 
-/** Resolves an app's `id` from the already-cached apps list by `name` -
- * the dashboard's URLs stay name-keyed while the API is id-keyed, so every
- * detail-page hook needs this instead of a name-keyed API call. */
+// Resolves an app's `id` from the already-cached apps list by `name` - the
+// dashboard's URLs stay name-keyed while the API is id-keyed, so every
+// detail-page hook needs this instead of a name-keyed API call.
 export function useAppIdByName(name: string): string | undefined {
   const { data: apps } = useApps();
   return apps?.find((app) => app.name === name)?.id;
@@ -70,16 +70,16 @@ export function useDeploymentStats(id: string, deploymentId: string) {
   return useQuery(deploymentStatsOptions(useApi(), id, deploymentId));
 }
 
-function hostStatsOptions(api: Api) {
+function hostStatsOptions(api: Api, hostId: number) {
   return queryOptions({
-    queryKey: hostStatsKey(),
-    queryFn: api.getHostStats,
+    queryKey: hostStatsKey(hostId),
+    queryFn: () => api.getHostStats(hostId),
     refetchInterval: 2000,
   });
 }
 
-export function useHostStats(enabled: boolean) {
-  return useQuery({ ...hostStatsOptions(useApi()), enabled });
+export function useHostStats(hostId: number, enabled: boolean) {
+  return useQuery({ ...hostStatsOptions(useApi(), hostId), enabled });
 }
 
 export function useCreateApp() {
@@ -105,8 +105,8 @@ export function useUpdateAppEnvVars(id: string) {
   });
 }
 
-/** Renaming also affects the apps list (subdomain/dashboard URL derive from
- * `name`) and the app's own detail query, so both get invalidated. */
+// Renaming also affects the apps list (subdomain/dashboard URL derive from
+// `name`) and the app's own detail query, so both get invalidated.
 export function useRenameApp(id: string) {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -226,6 +226,15 @@ export function useRevokeHost() {
   });
 }
 
+export function useUpdateHostIp() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ip }: { id: number; ip: string | null }) => api.updateHostIp(id, ip),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: hostsKey() }),
+  });
+}
+
 export function useChangeOwnPassword() {
   const api = useApi();
   return useMutation({
@@ -248,7 +257,7 @@ export function useDeleteApp(id: string) {
   });
 }
 
-/** Invalidates the app + its deployments after any deployment-mutating action. */
+// Invalidates the app + its deployments after any deployment-mutating action.
 function useInvalidateDeployments(id: string) {
   const queryClient = useQueryClient();
   return () => {

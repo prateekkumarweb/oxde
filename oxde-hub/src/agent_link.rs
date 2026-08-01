@@ -236,16 +236,8 @@ impl AgentRegistry {
         self.hosts.pin().remove(&host_id);
     }
 
-    /// "The" one connected host, for callers with no specific `host_id` to
-    /// target. Falls back to a disconnected stand-in (`AgentUnavailable`
-    /// on every call) if none is connected.
-    pub fn any(&self) -> AgentLink {
-        self.hosts
-            .pin()
-            .values()
-            .next()
-            .cloned()
-            .unwrap_or_else(AgentLink::new)
+    pub fn is_connected(&self, host_id: i64) -> bool {
+        self.hosts.pin().contains_key(&host_id)
     }
 
     /// `App.host_id` resolved to a link - a disconnected host falls back

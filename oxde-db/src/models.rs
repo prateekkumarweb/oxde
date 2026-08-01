@@ -89,6 +89,7 @@ pub struct Host {
     #[key]
     #[auto]
     pub id: i64,
+    #[unique]
     pub name: String,
     /// Non-secret lookup key; the secret half is only ever stored hashed
     /// (`token_hash`), since a hash can't be looked up by equality.
@@ -99,6 +100,13 @@ pub struct Host {
     pub revoked: bool,
     /// Set on every successful agent connect; `None` until the first one.
     pub last_seen_at: Option<i64>,
+    /// Admin-confirmed address used for manual DNS - prefilled from
+    /// `last_connected_ip` but editable, since the connecting address isn't
+    /// always the one clients should target (NAT, multiple interfaces).
+    pub ip: Option<String>,
+    /// Raw peer address from the agent's last `Session` connect, refreshed
+    /// on every reconnect. A suggestion for `ip`, not used for routing.
+    pub last_connected_ip: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
