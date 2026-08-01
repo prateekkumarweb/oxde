@@ -114,7 +114,7 @@ async fn resolve_and_cache_container_ip(
     app_name: &str,
     container_name: &str,
 ) -> Option<String> {
-    match containers::container_ip(state.agent_link(), container_name).await {
+    match containers::container_ip(&state.agent_link(), container_name).await {
         Ok(Some(ip)) => {
             state.cache_container_ip(container_name, ip.clone());
             Some(ip)

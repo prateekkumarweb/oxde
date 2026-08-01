@@ -14,14 +14,14 @@ use tonic::{
     transport::{Identity, Server, ServerTlsConfig},
 };
 
-use crate::{agent_link::AgentLink, api_tokens, state::AppState, storage};
+use crate::{api_tokens, state::AppState, storage};
 
 struct Hub {
     state: AppState,
-    agent_link: AgentLink,
-    /// Signaled once per `Session` connection, after `set_outbound` so the
-    /// agent is already callable - lets `main.rs` re-run agent-dependent
-    /// reconciliation without `grpc.rs` needing to know what that means.
+    /// Signaled once per `Session` connection, after the agent is
+    /// registered so it's already callable - lets `main.rs` re-run
+    /// agent-dependent reconciliation without `grpc.rs` needing to know
+    /// what that means.
     connected_tx: mpsc::Sender<()>,
 }
 
@@ -40,10 +40,16 @@ impl HubService for Hub {
         request: Request<Streaming<SessionRequest>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
         let host = authenticate(&self.state, &request).await?;
+        let registry = self.state.agent_registry().clone();
+        let Some(agent_link) = registry.connect(host.id) else {
+            return Err(Status::already_exists(
+                "this host already has an active session",
+            ));
+        };
 
         let mut incoming = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
-        self.agent_link.set_outbound(tx).await;
+        agent_link.set_outbound(tx).await;
         // A full connected_tx channel just means a reconciliation run is
         // already pending or in progress - nothing new to signal.
         let _ = self.connected_tx.try_send(());
@@ -52,12 +58,11 @@ impl HubService for Hub {
             tracing::warn!(error = ?err, host_id = host.id, "failed to record host last_seen_at");
         }
 
-        let agent_link = self.agent_link.clone();
         tokio::spawn(async move {
             while let Ok(Some(message)) = incoming.message().await {
                 agent_link.resolve(message).await;
             }
-            agent_link.clear_outbound().await;
+            registry.disconnect(host.id);
         });
 
         let stream = ReceiverStream::new(rx).map(Ok);
@@ -97,7 +102,6 @@ async fn authenticate(
 /// the agent pins by fingerprint (see `agent_tls.rs`).
 pub async fn serve(
     state: AppState,
-    agent_link: AgentLink,
     connected_tx: mpsc::Sender<()>,
     identity: Identity,
 ) -> anyhow::Result<()> {
@@ -107,7 +111,6 @@ pub async fn serve(
         .tls_config(ServerTlsConfig::new().identity(identity))?
         .add_service(HubServiceServer::new(Hub {
             state,
-            agent_link,
             connected_tx,
         }))
         .serve(addr)
@@ -128,7 +131,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        agent_link::AgentLink,
+        agent_link::AgentRegistry,
         state::{AppState, AppStateLimits},
         storage,
     };
@@ -162,21 +165,20 @@ mod tests {
             },
             crate::reverse_proxy::new_client(),
             db,
-            AgentLink::new(),
+            AgentRegistry::new(),
         )
     }
 
     /// Starts a real, TLS-enabled hub gRPC server with a `Host` row a fake
-    /// agent can authenticate as. Returns the `AgentLink` (for the test to
-    /// drive as the hub side), the dial address, the cert to trust, and
-    /// the host's plaintext token.
-    async fn spawn_test_hub() -> (AgentLink, String, Certificate, String) {
+    /// agent can authenticate as. Returns the `AppState` (fetch the
+    /// connected `AgentLink` via `.agent_registry().any()`), the dial
+    /// address, the cert to trust, and the host's plaintext token.
+    async fn spawn_test_hub() -> (AppState, String, Certificate, String) {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let state = test_state("hub").await;
-        let (_, token) = storage::create_host(&state, "test-agent")
+        let (_host, token) = storage::create_host(&state, "test-agent")
             .await
             .expect("create_host");
-        let agent_link = AgentLink::new();
         let incoming = TcpIncoming::bind("127.0.0.1:0".parse().expect("addr")).expect("bind");
         let addr = incoming.local_addr().expect("local_addr");
 
@@ -186,15 +188,14 @@ mod tests {
         let ca_cert = Certificate::from_pem(cert.pem());
         let identity = Identity::from_pem(cert.pem(), signing_key.serialize_pem());
 
-        let server_link = agent_link.clone();
+        let server_state = state.clone();
         let (connected_tx, _) = mpsc::channel(1);
         tokio::spawn(async move {
             Server::builder()
                 .tls_config(ServerTlsConfig::new().identity(identity))
                 .expect("tls_config")
                 .add_service(HubServiceServer::new(Hub {
-                    state,
-                    agent_link: server_link,
+                    state: server_state,
                     connected_tx,
                 }))
                 .serve_with_incoming(incoming)
@@ -202,7 +203,7 @@ mod tests {
                 .expect("serve");
         });
 
-        (agent_link, format!("https://{addr}"), ca_cert, token)
+        (state, format!("https://{addr}"), ca_cert, token)
     }
 
     /// Trusts exactly the cert `spawn_test_hub` generated - fingerprint
@@ -246,7 +247,7 @@ mod tests {
     /// final, then replies with the total byte count received.
     #[tokio::test]
     async fn call_chunked_delivers_every_chunk_before_the_single_reply() {
-        let (agent_link, hub_addr, ca_cert, token) = spawn_test_hub().await;
+        let (state, hub_addr, ca_cert, token) = spawn_test_hub().await;
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
@@ -288,6 +289,7 @@ mod tests {
         });
         ready_rx.await.expect("fake agent ready");
 
+        let agent_link = state.agent_registry().any();
         let result = agent_link
             .call_chunked(vec![
                 session_response::Payload::EchoUpload(Chunk {
@@ -313,7 +315,7 @@ mod tests {
     /// run of `EchoStreamChunk` replies, the last marked final.
     #[tokio::test]
     async fn call_streaming_reply_delivers_every_chunk_the_agent_sends() {
-        let (agent_link, hub_addr, ca_cert, token) = spawn_test_hub().await;
+        let (state, hub_addr, ca_cert, token) = spawn_test_hub().await;
         let (ready_tx, ready_rx) = oneshot::channel();
 
         tokio::spawn(async move {
@@ -353,6 +355,7 @@ mod tests {
         });
         ready_rx.await.expect("fake agent ready");
 
+        let agent_link = state.agent_registry().any();
         let (request_id, mut rx) = agent_link
             .call_streaming_reply(session_response::Payload::EchoStreamRequest(
                 EchoStreamRequest { chunk_count: 3 },
@@ -381,7 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_rejects_an_invalid_token() {
-        let (_agent_link, hub_addr, ca_cert, _token) = spawn_test_hub().await;
+        let (_state, hub_addr, ca_cert, _token) = spawn_test_hub().await;
         let mut client = connect_test_client(hub_addr, ca_cert).await;
         let (_tx, rx) = mpsc::channel(16);
 
@@ -390,5 +393,30 @@ mod tests {
             .await
             .expect_err("an invalid token must be rejected");
         assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    /// Proves the duplicate-connect decision: a second `Session` for the
+    /// same already-connected host is rejected, not silently allowed to
+    /// take over.
+    #[tokio::test]
+    async fn session_rejects_a_second_connection_for_an_already_connected_host() {
+        let (_state, hub_addr, ca_cert, token) = spawn_test_hub().await;
+
+        let mut first_client = connect_test_client(hub_addr.clone(), ca_cert.clone()).await;
+        let (_first_tx, first_rx) = mpsc::channel(16);
+        // Resolves only once `Hub::session` has returned its stream, so
+        // the host is already registered before the second connect races it.
+        let _first_session = first_client
+            .session(session_request(ReceiverStream::new(first_rx), &token))
+            .await
+            .expect("open first session");
+
+        let mut second_client = connect_test_client(hub_addr, ca_cert).await;
+        let (_second_tx, second_rx) = mpsc::channel(16);
+        let err = second_client
+            .session(session_request(ReceiverStream::new(second_rx), &token))
+            .await
+            .expect_err("a second connection for the same host must be rejected");
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
     }
 }

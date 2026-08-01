@@ -263,13 +263,13 @@ impl OxdeMcpServer {
         let Some(container_name) = deployment.container_name else {
             return json_text(&Option::<containers::ContainerStats>::None);
         };
-        if !containers::is_running(self.state.agent_link(), &container_name)
+        if !containers::is_running(&self.state.agent_link(), &container_name)
             .await
             .map_err(|e| e.to_string())?
         {
             return json_text(&Option::<containers::ContainerStats>::None);
         }
-        let stats = containers::stats(self.state.agent_link(), &container_name)
+        let stats = containers::stats(&self.state.agent_link(), &container_name)
             .await
             .map_err(|e| e.to_string())?;
         json_text(&Some(stats))

@@ -147,7 +147,8 @@ async fn sweep_orphaned_deployment_dirs(
 /// propagated as a startup failure the way `sweep_orphaned_dirs` is - the
 /// agent may not be connected yet at hub startup, and that isn't fatal.
 pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
-    let agent_deployment_ids = match crate::agent_fs::list_deployment_dirs(state.agent_link()).await
+    let agent_deployment_ids = match crate::agent_fs::list_deployment_dirs(&state.agent_link())
+        .await
     {
         Ok(ids) => ids,
         Err(err) => {
@@ -185,7 +186,7 @@ pub async fn sweep_agent_orphaned_deployment_dirs(state: &AppState) {
             "removing orphaned agent-side deployment directory with no matching run-mode Deployment row"
         );
         if let Err(err) =
-            crate::agent_fs::delete_deployment_dir(state.agent_link(), &deployment_id).await
+            crate::agent_fs::delete_deployment_dir(&state.agent_link(), &deployment_id).await
         {
             tracing::error!(error = %err, deployment_id = %id, "failed to remove orphaned agent-side deployment directory");
             continue;
@@ -959,9 +960,9 @@ pub async fn ship_run_deployment_to_agent(
     crate::agent_fs::zip_dir(&files_dir, &zip_path)?;
 
     let result = async {
-        crate::agent_fs::create_deployment_dir(state.agent_link(), deployment_id).await?;
+        crate::agent_fs::create_deployment_dir(&state.agent_link(), deployment_id).await?;
         crate::agent_fs::upload_zip_and_extract(
-            state.agent_link(),
+            &state.agent_link(),
             deployment_id,
             &zip_path,
             state.max_uncompressed_bytes(),
@@ -1152,7 +1153,7 @@ mod tests {
         update_app,
     };
     use crate::{
-        agent_link::AgentLink,
+        agent_link::AgentRegistry,
         error::AppError,
         state::{AppState, AppStateLimits},
     };
@@ -1186,7 +1187,7 @@ mod tests {
             },
             crate::reverse_proxy::new_client(),
             db,
-            AgentLink::new(),
+            AgentRegistry::new(),
         )
     }
 

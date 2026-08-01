@@ -368,7 +368,7 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue, Method};
 
     use super::*;
-    use crate::{agent_link::AgentLink, state::AppStateLimits};
+    use crate::{agent_link::AgentRegistry, state::AppStateLimits};
 
     /// A fresh `AppState` over its own tempdir, so tests never share state.
     async fn test_state(label: &str) -> AppState {
@@ -398,7 +398,7 @@ mod tests {
             },
             crate::reverse_proxy::new_client(),
             db,
-            AgentLink::new(),
+            AgentRegistry::new(),
         )
     }
 

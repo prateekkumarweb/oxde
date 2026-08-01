@@ -12,6 +12,7 @@ use oxde_proto::hub::v1::{
     GetHostStatsRequest, HostStatsResult, SessionRequest, SessionResponse, session_request,
     session_response,
 };
+use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::error::{AppError, AppResult};
@@ -22,8 +23,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// pace with the hub draining it, not buffer unboundedly ahead.
 const STREAM_CHANNEL_CAPACITY: usize = 16;
 
-/// Single-agent for now - `set_outbound` replaces whatever was there
-/// before. Cloneable, shared via `AppState`.
+/// One agent's live `Session` connection. Cloneable (cheap, `Arc`-backed);
+/// every clone shares the same connection state.
 #[derive(Clone)]
 pub struct AgentLink {
     inner: Arc<Inner>,
@@ -50,10 +51,6 @@ impl AgentLink {
 
     pub async fn set_outbound(&self, sender: mpsc::Sender<SessionResponse>) {
         *self.inner.outbound.lock().await = Some(sender);
-    }
-
-    pub async fn clear_outbound(&self) {
-        *self.inner.outbound.lock().await = None;
     }
 
     /// Routes a `SessionRequest` reply to its matching caller: a stream
@@ -208,5 +205,45 @@ impl AgentLink {
 impl Default for AgentLink {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Every connected agent's `AgentLink`, keyed by `Host.id`. Cloneable
+/// (cheap, `Arc`-backed), shared via `AppState`.
+#[derive(Clone, Default)]
+pub struct AgentRegistry {
+    hosts: Arc<ConcurrentHashMap<i64, AgentLink>>,
+}
+
+impl AgentRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Registers a fresh `AgentLink` for `host_id`, unless one is already
+    /// connected - `None` means the caller should reject this connection
+    /// rather than silently taking over an already-live one.
+    pub fn connect(&self, host_id: i64) -> Option<AgentLink> {
+        let link = AgentLink::new();
+        self.hosts
+            .pin()
+            .try_insert(host_id, link.clone())
+            .ok()
+            .map(|_| link)
+    }
+
+    pub fn disconnect(&self, host_id: i64) {
+        self.hosts.pin().remove(&host_id);
+    }
+
+    /// "The" one connected host - no per-app routing yet. Falls back to a
+    /// disconnected stand-in (`AgentUnavailable` on every call) if none.
+    pub fn any(&self) -> AgentLink {
+        self.hosts
+            .pin()
+            .values()
+            .next()
+            .cloned()
+            .unwrap_or_else(AgentLink::new)
     }
 }

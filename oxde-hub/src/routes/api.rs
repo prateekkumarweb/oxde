@@ -62,7 +62,7 @@ async fn host_stats_endpoint(
     current_user: ApiUser,
 ) -> AppResult<Json<HostStats>> {
     current_user.require_admin()?;
-    let host_stats = host_stats::collect(state.agent_link()).await?;
+    let host_stats = host_stats::collect(&state.agent_link()).await?;
     Ok(Json(host_stats))
 }
 
@@ -154,7 +154,7 @@ pub async fn deployment_view(
     let is_active = active_id == Some(deployment.id.as_str());
     let container_status = match &deployment.container_name {
         Some(container_name) => Some(
-            match containers::is_running(state.agent_link(), container_name).await {
+            match containers::is_running(&state.agent_link(), container_name).await {
                 Ok(true) => ContainerStatus::Running,
                 Ok(false) => ContainerStatus::Stopped,
                 Err(_) => ContainerStatus::Unknown,
@@ -261,7 +261,7 @@ async fn delete_app(
 pub async fn delete_app_with_containers(state: &AppState, app_id: &str) -> AppResult<()> {
     for deployment in storage::list_deployments(state, app_id).await? {
         if let Some(container_name) = &deployment.container_name {
-            containers::stop_and_remove(state.agent_link(), container_name, false).await?;
+            containers::stop_and_remove(&state.agent_link(), container_name, false).await?;
         }
     }
     storage::delete_app(state, app_id).await
@@ -372,7 +372,7 @@ async fn execute_git_deployment(
             registry: state.log_registry().clone(),
         };
         if let Err(err) = containers::run_build_command(
-            state.agent_link(),
+            &state.agent_link(),
             &container_name,
             &checkout_dir,
             containers::BuildCommandConfig {
@@ -438,7 +438,7 @@ pub async fn activate_with_containers(
             registry: state.log_registry().clone(),
         });
         containers::start(
-            state.agent_link(),
+            &state.agent_link(),
             deployment_id,
             &container_name,
             run_config,
@@ -449,7 +449,7 @@ pub async fn activate_with_containers(
         .await?;
 
         containers::spawn_run_log_pump(
-            state.agent_link(),
+            &state.agent_link(),
             &container_name,
             LogTarget {
                 path: state.deployment_log_path(&app.id, deployment_id, LogKind::Run),
@@ -464,7 +464,7 @@ pub async fn activate_with_containers(
             && let Ok(previous) = storage::get_deployment(state, app_id, &previous_id).await
             && let Some(previous_container) = &previous.container_name
             && let Err(err) =
-                containers::stop_and_remove(state.agent_link(), previous_container, false).await
+                containers::stop_and_remove(&state.agent_link(), previous_container, false).await
         {
             tracing::warn!(error = %err, app_id, "failed to stop previous container during activate");
         }
@@ -492,8 +492,8 @@ pub async fn delete_deployment_with_containers(
     storage::delete_deployment(state, app_id, deployment_id).await?;
 
     if let Some(container_name) = container_name {
-        containers::stop_and_remove(state.agent_link(), &container_name, false).await?;
-        crate::agent_fs::delete_deployment_dir(state.agent_link(), deployment_id).await?;
+        containers::stop_and_remove(&state.agent_link(), &container_name, false).await?;
+        crate::agent_fs::delete_deployment_dir(&state.agent_link(), deployment_id).await?;
     }
     Ok(())
 }
@@ -606,10 +606,10 @@ async fn deployment_stats(
     let Some(container_name) = deployment.container_name else {
         return Ok(Json(None));
     };
-    if !containers::is_running(state.agent_link(), &container_name).await? {
+    if !containers::is_running(&state.agent_link(), &container_name).await? {
         return Ok(Json(None));
     }
-    let container_stats = containers::stats(state.agent_link(), &container_name).await?;
+    let container_stats = containers::stats(&state.agent_link(), &container_name).await?;
     Ok(Json(Some(container_stats)))
 }
 

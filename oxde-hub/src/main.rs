@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         },
         reverse_proxy::new_client(),
         db,
-        agent_link::AgentLink::new(),
+        agent_link::AgentRegistry::new(),
     );
 
     bootstrap_admin(&state, &config.admin_username, &config.admin_password)
@@ -149,17 +149,9 @@ async fn main() -> anyhow::Result<()> {
 /// agent-dependent reconciliation loop (see `reconcile::on_agent_connected`).
 fn spawn_grpc_and_reconciliation(state: &AppState, agent_tls_identity: tonic::transport::Identity) {
     let (agent_connected_tx, mut agent_connected_rx) = tokio::sync::mpsc::channel(1);
-    let agent_link = state.agent_link().clone();
     let grpc_state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = grpc::serve(
-            grpc_state,
-            agent_link,
-            agent_connected_tx,
-            agent_tls_identity,
-        )
-        .await
-        {
+        if let Err(err) = grpc::serve(grpc_state, agent_connected_tx, agent_tls_identity).await {
             tracing::error!(error = ?err, "hub gRPC listener stopped");
         }
     });

@@ -12,7 +12,9 @@ use papaya::HashMap as ConcurrentHashMap;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 
 use crate::{
-    agent_link::AgentLink, auth::LoginAttempts, deployment_logs::LogRegistry,
+    agent_link::{AgentLink, AgentRegistry},
+    auth::LoginAttempts,
+    deployment_logs::LogRegistry,
     reverse_proxy::ProxyClient,
 };
 
@@ -32,7 +34,7 @@ impl AppState {
         limits: AppStateLimits,
         proxy_client: ProxyClient,
         db: toasty::Db,
-        agent_link: AgentLink,
+        agent_registry: AgentRegistry,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -53,13 +55,18 @@ impl AppState {
                 sessions: ConcurrentHashMap::new(),
                 login_attempts: ConcurrentHashMap::new(),
                 log_registry: LogRegistry::new(),
-                agent_link,
+                agent_registry,
             }),
         }
     }
 
-    pub fn agent_link(&self) -> &AgentLink {
-        &self.inner.agent_link
+    /// "The" one connected host's link - see `AgentRegistry::any`.
+    pub fn agent_link(&self) -> AgentLink {
+        self.inner.agent_registry.any()
+    }
+
+    pub fn agent_registry(&self) -> &AgentRegistry {
+        &self.inner.agent_registry
     }
 
     pub fn log_registry(&self) -> &LogRegistry {
@@ -201,7 +208,7 @@ struct Inner {
     sessions: ConcurrentHashMap<String, crate::auth::Session>,
     login_attempts: ConcurrentHashMap<IpAddr, LoginAttempts>,
     log_registry: LogRegistry,
-    agent_link: AgentLink,
+    agent_registry: AgentRegistry,
 }
 
 /// Scalar config `AppState::new` bundles a plain constructor's worth of
