@@ -8,10 +8,11 @@ mod hub_tls;
 mod layout;
 mod zip_extract;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use bollard::Docker;
+use oxde_config::AgentConfig;
 use oxde_proto::hub::v1::{
     Chunk, HostStatsResult, PingRequest, SessionRequest, host_stats_result,
     hub_service_client::HubServiceClient, session_request, session_response,
@@ -25,6 +26,9 @@ use tonic::transport::{ClientTlsConfig, Endpoint};
 /// same transfer and gets routed here instead of spawning a fresh handler
 /// per message.
 type InFlightUploads = Arc<Mutex<HashMap<u64, mpsc::Sender<Chunk>>>>;
+
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,17 +55,46 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to ensure the run-mode container network exists")?;
 
     let hub_addr = format!("https://{}", config.hub_addr);
+
+    // Every attempt after the first is a reconnect: a session that ends
+    // (hub restart, network blip) is retried with backoff rather than
+    // exiting the process. The delay resets once a session actually opens,
+    // so a brief blip doesn't leave the agent waiting out a long backoff.
+    let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
+    loop {
+        if let Err(err) =
+            run_session(&config, &hub_addr, &data_dir, &docker, &mut reconnect_delay).await
+        {
+            tracing::warn!(error = ?err, retry_in_secs = reconnect_delay.as_secs(), "hub session ended");
+        }
+        tokio::time::sleep(reconnect_delay).await;
+        reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+    }
+}
+
+/// One connect-and-serve attempt: dials the hub, opens a `Session`, and
+/// dispatches requests until the stream ends or errors. `reconnect_delay`
+/// is reset to the initial delay as soon as the session opens, so only
+/// attempts that never even connect grow the backoff.
+async fn run_session(
+    config: &AgentConfig,
+    hub_addr: &str,
+    data_dir: &Path,
+    docker: &Docker,
+    reconnect_delay: &mut Duration,
+) -> anyhow::Result<()> {
     tracing::info!(hub_addr, "dialing hub");
 
-    let pinned_fingerprint = hub_tls::expected_fingerprint(&data_dir, config.hub_tls_fingerprint);
+    let pinned_fingerprint =
+        hub_tls::expected_fingerprint(data_dir, config.hub_tls_fingerprint.clone());
     let is_first_connect = pinned_fingerprint.is_none();
     let verifier = Arc::new(hub_tls::FingerprintVerifier::new(pinned_fingerprint));
-    let channel = Endpoint::from_shared(hub_addr)?
+    let channel = Endpoint::from_shared(hub_addr.to_string())?
         .tls_config_with_verifier(ClientTlsConfig::new(), verifier.clone())?
         .connect()
         .await?;
     if is_first_connect && let Some(fingerprint) = verifier.captured_fingerprint() {
-        hub_tls::persist_fingerprint(&data_dir, &fingerprint)
+        hub_tls::persist_fingerprint(data_dir, &fingerprint)
             .context("failed to persist the hub's TLS certificate fingerprint")?;
         tracing::warn!(
             fingerprint,
@@ -85,9 +118,10 @@ async fn main() -> anyhow::Result<()> {
     );
     let mut inbound = client.session(session_request).await?.into_inner();
 
-    let in_flight_uploads: InFlightUploads = Arc::new(Mutex::new(HashMap::new()));
-
+    *reconnect_delay = INITIAL_RECONNECT_DELAY;
     tracing::info!("session opened, waiting for hub requests");
+
+    let in_flight_uploads: InFlightUploads = Arc::new(Mutex::new(HashMap::new()));
     while let Some(message) = inbound.message().await? {
         let Some(payload) = message.payload else {
             continue;
@@ -95,11 +129,11 @@ async fn main() -> anyhow::Result<()> {
         let request_id = message.request_id;
 
         if let session_response::Payload::UploadZipAndExtract(req) = payload {
-            route_upload_chunk(&in_flight_uploads, &data_dir, request_id, req, tx.clone()).await;
+            route_upload_chunk(&in_flight_uploads, data_dir, request_id, req, tx.clone()).await;
             continue;
         }
 
-        let data_dir = data_dir.clone();
+        let data_dir = data_dir.to_path_buf();
         let docker = docker.clone();
         let tx = tx.clone();
         tokio::spawn(async move {

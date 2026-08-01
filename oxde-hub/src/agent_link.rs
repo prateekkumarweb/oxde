@@ -87,6 +87,15 @@ impl AgentLink {
         self.inner.streams.lock().await.remove(&request_id);
     }
 
+    /// Called once the `Session` stream has ended - unblocks every waiting
+    /// caller (closed channel/stream instead of hanging) and fails any new
+    /// call immediately instead of queuing into a dead connection.
+    pub async fn fail_all_pending(&self) {
+        self.inner.pending.lock().await.clear();
+        self.inner.streams.lock().await.clear();
+        *self.inner.outbound.lock().await = None;
+    }
+
     fn next_request_id(&self) -> u64 {
         self.inner.next_request_id.fetch_add(1, Ordering::Relaxed)
     }

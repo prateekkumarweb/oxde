@@ -64,6 +64,7 @@ impl HubService for Hub {
                 agent_link.resolve(message).await;
             }
             registry.disconnect(host.id);
+            agent_link.fail_all_pending().await;
         });
 
         let stream = ReceiverStream::new(rx).map(Ok);
@@ -382,6 +383,50 @@ mod tests {
         agent_link.end_stream(request_id).await;
 
         assert_eq!(received, vec![0, 1, 2]);
+    }
+
+    /// Proves the stream-drop fix: a `call_streaming_reply` still waiting on
+    /// a reply when the agent disconnects gets unblocked with a closed
+    /// channel instead of hanging forever.
+    #[tokio::test]
+    async fn session_ending_unblocks_an_in_flight_streaming_call() {
+        let (state, hub_addr, ca_cert, host_id, token) = spawn_test_hub().await;
+        let (ready_tx, ready_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let mut client = connect_test_client(hub_addr, ca_cert).await;
+            let (tx, rx) = mpsc::channel(16);
+            let mut inbound = client
+                .session(session_request(ReceiverStream::new(rx), &token))
+                .await
+                .expect("open session")
+                .into_inner();
+            let _ = ready_tx.send(());
+
+            inbound
+                .message()
+                .await
+                .expect("recv")
+                .expect("some message");
+            // Disconnects without ever replying, ending the stream from the
+            // agent's side.
+            drop(tx);
+            drop(client);
+        });
+        ready_rx.await.expect("fake agent ready");
+
+        let agent_link = state.agent_registry().for_host(host_id);
+        let (_request_id, mut rx) = agent_link
+            .call_streaming_reply(session_response::Payload::EchoStreamRequest(
+                EchoStreamRequest { chunk_count: 1 },
+            ))
+            .await
+            .expect("call_streaming_reply");
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("must not hang past the disconnect");
+        assert!(received.is_none(), "stream must close, not deliver a chunk");
     }
 
     #[tokio::test]
