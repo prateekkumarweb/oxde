@@ -14,7 +14,8 @@ base64.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
 gix = { workspace = true, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
-hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
 jiff = { workspace = true, features = ["serde"] }
 oxde-db.workspace = true
 oxde-models.workspace = true
