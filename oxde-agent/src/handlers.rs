@@ -5,13 +5,12 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use oxde_models::{EnvVar, RunConfig};
 use oxde_proto::hub::v1::{
-    AgentError, AgentErrorKind, Chunk, CommandOutput, CommandResult, ContainerIp,
+    AgentError, AgentErrorKind, Chunk, CommandOutput, CommandResult,
     ContainerStats as ProtoContainerStats, ContainerStatsRequest, ContainerStatsResult,
-    DeploymentIdList, Empty, GetContainerIpRequest, GetContainerIpResult,
-    IsContainerRunningRequest, IsContainerRunningResult, ListDeploymentDirsResult,
-    RunBuildCommandRequest, SessionRequest, StartRunContainerRequest,
+    DeploymentIdList, Empty, HostStatsResult, IsContainerRunningRequest, IsContainerRunningResult,
+    ListDeploymentDirsResult, RunBuildCommandRequest, SessionRequest, StartRunContainerRequest,
     StopAndRemoveContainerRequest, StreamContainerLogsRequest, UploadZipAndExtractResult,
-    command_output, command_result, container_stats_result, get_container_ip_result,
+    command_output, command_result, container_stats_result, host_stats_result,
     is_container_running_result, list_deployment_dirs_result, session_request,
     upload_zip_and_extract_result,
 };
@@ -263,14 +262,12 @@ pub async fn container_stats(docker: &Docker, req: ContainerStatsRequest) -> Con
     }
 }
 
-pub async fn get_container_ip(docker: &Docker, req: GetContainerIpRequest) -> GetContainerIpResult {
-    let result = match containers::container_ip(docker, &req.container_name).await {
-        Ok(ip) => get_container_ip_result::Result::Ok(ContainerIp { ip }),
-        Err(msg) => {
-            get_container_ip_result::Result::Error(agent_error(AgentErrorKind::Unavailable, msg))
-        }
+pub async fn get_host_stats(data_dir: &Path) -> HostStatsResult {
+    let result = match crate::host_stats::collect(data_dir).await {
+        Ok(stats) => host_stats_result::Result::Ok(stats),
+        Err(err) => host_stats_result::Result::Error(err.to_string()),
     };
-    GetContainerIpResult {
+    HostStatsResult {
         result: Some(result),
     }
 }

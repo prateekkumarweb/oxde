@@ -196,6 +196,32 @@ impl AgentLink {
         Ok((request_id, rx))
     }
 
+    /// Both directions streaming concurrently under one `request_id` -
+    /// `payloads` drains in the background while the caller reads the
+    /// returned receiver, unlike `call_streamed`/`call_streaming_reply`
+    /// which are one-sided. Same `end_stream` cleanup convention.
+    pub async fn call_bidi_streamed(
+        &self,
+        payloads: impl Stream<Item = session_response::Payload> + Send + 'static,
+    ) -> AppResult<(u64, mpsc::Receiver<session_request::Payload>)> {
+        let request_id = self.next_request_id();
+        let (tx, rx) = mpsc::channel(STREAM_CHANNEL_CAPACITY);
+        self.inner.streams.lock().await.insert(request_id, tx);
+
+        let outbound = self.outbound(request_id).await?;
+        let this = self.clone();
+        tokio::spawn(async move {
+            let mut payloads = std::pin::pin!(payloads);
+            while let Some(payload) = payloads.next().await {
+                if this.send(&outbound, request_id, payload).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok((request_id, rx))
+    }
+
     pub async fn get_host_stats(&self) -> AppResult<HostStatsResult> {
         let payload = self
             .call(session_response::Payload::GetHostStats(

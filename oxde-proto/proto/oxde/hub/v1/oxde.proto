@@ -25,12 +25,12 @@ message SessionRequest {
     CommandResult stop_and_remove_container_result = 7;
     IsContainerRunningResult is_container_running_result = 8;
     ContainerStatsResult container_stats_result = 9;
-    GetContainerIpResult get_container_ip_result = 10;
     Chunk stream_container_logs_chunk = 11;
     CommandResult create_deployment_dir_result = 12;
     CommandResult delete_deployment_dir_result = 13;
     ListDeploymentDirsResult list_deployment_dirs_result = 14;
     UploadZipAndExtractResult upload_zip_and_extract_result = 15;
+    RelayHttpResponse relay_http_response = 16;
   }
 }
 
@@ -46,12 +46,12 @@ message SessionResponse {
     StopAndRemoveContainerRequest stop_and_remove_container = 7;
     IsContainerRunningRequest is_container_running = 8;
     ContainerStatsRequest container_stats = 9;
-    GetContainerIpRequest get_container_ip = 10;
     StreamContainerLogsRequest stream_container_logs = 11;
     CreateDeploymentDirRequest create_deployment_dir = 12;
     DeleteDeploymentDirRequest delete_deployment_dir = 13;
     ListDeploymentDirsRequest list_deployment_dirs = 14;
     UploadZipAndExtractRequest upload_zip_and_extract = 15;
+    RelayHttpRequest relay_http_request = 16;
   }
 }
 
@@ -164,21 +164,6 @@ message ContainerStats {
   uint64 memory_limit_bytes = 3;
 }
 
-message GetContainerIpRequest {
-  string container_name = 1;
-}
-
-message GetContainerIpResult {
-  oneof result {
-    ContainerIp ok = 1;
-    AgentError error = 2;
-  }
-}
-
-message ContainerIp {
-  optional string ip = 1;
-}
-
 message StreamContainerLogsRequest {
   string container_name = 1;
   bool follow = 2;
@@ -216,4 +201,39 @@ message UploadZipAndExtractResult {
     uint64 content_size_bytes = 1;
     AgentError error = 2;
   }
+}
+
+message HttpHeader {
+  string name = 1;
+  string value = 2;
+}
+
+// Unlike every other RPC here, both directions stream concurrently under
+// one request_id - the request body out while the response streams back.
+message RelayHttpRequest {
+  oneof part {
+    RelayHttpRequestHead head = 1;
+    Chunk body_chunk = 2;
+  }
+}
+
+message RelayHttpRequestHead {
+  string method = 1;
+  string path = 2;
+  repeated HttpHeader headers = 3;
+  string container_name = 4;
+  uint32 container_port = 5;
+}
+
+message RelayHttpResponse {
+  oneof part {
+    RelayHttpResponseHead head = 1;
+    Chunk body_chunk = 2;
+    AgentError error = 3;
+  }
+}
+
+message RelayHttpResponseHead {
+  uint32 status = 1;
+  repeated HttpHeader headers = 2;
 }

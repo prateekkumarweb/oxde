@@ -3,11 +3,10 @@ use std::{path::Path, time::Duration};
 use bytes::Bytes;
 use oxde_models::{EnvVar, RunConfig};
 use oxde_proto::hub::v1::{
-    AgentErrorKind, CommandOutput, ContainerStatsRequest, GetContainerIpRequest,
-    IsContainerRunningRequest, RunBuildCommandRequest, StartRunContainerRequest,
-    StopAndRemoveContainerRequest, StreamContainerLogsRequest, command_output, command_result,
-    container_stats_result, get_container_ip_result, is_container_running_result, session_request,
-    session_response,
+    AgentErrorKind, CommandOutput, ContainerStatsRequest, IsContainerRunningRequest,
+    RunBuildCommandRequest, StartRunContainerRequest, StopAndRemoveContainerRequest,
+    StreamContainerLogsRequest, command_output, command_result, container_stats_result,
+    is_container_running_result, session_request, session_response,
 };
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -232,28 +231,6 @@ pub async fn stats(agent_link: &AgentLink, container_name: &str) -> AppResult<Co
         Some(container_stats_result::Result::Error(err)) => Err(agent_error(err)),
         None => Err(AppError::AgentError(
             "agent sent an empty ContainerStats result".to_string(),
-        )),
-    }
-}
-
-pub async fn container_ip(
-    agent_link: &AgentLink,
-    container_name: &str,
-) -> AppResult<Option<String>> {
-    let payload = session_response::Payload::GetContainerIp(GetContainerIpRequest {
-        container_name: container_name.to_string(),
-    });
-    let reply = agent_link.call_chunked(vec![payload]).await?;
-    let session_request::Payload::GetContainerIpResult(result) = reply else {
-        return Err(AppError::AgentError(
-            "agent replied to GetContainerIp with the wrong payload type".to_string(),
-        ));
-    };
-    match result.result {
-        Some(get_container_ip_result::Result::Ok(ip)) => Ok(ip.ip),
-        Some(get_container_ip_result::Result::Error(err)) => Err(agent_error(err)),
-        None => Err(AppError::AgentError(
-            "agent sent an empty GetContainerIp result".to_string(),
         )),
     }
 }

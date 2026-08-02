@@ -7,6 +7,10 @@ anyhow.workspace = true
 bollard.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1", "server"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 oxde-config.workspace = true
 oxde-models.workspace = true
 oxde-proto.workspace = true
@@ -28,3 +32,4 @@ workspace = true
 
 [dev-dependencies]
 rcgen.workspace = true
+tokio = { workspace = true, features = ["net"] }

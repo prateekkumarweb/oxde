@@ -6,6 +6,7 @@ mod handlers;
 mod host_stats;
 mod hub_tls;
 mod layout;
+mod relay;
 mod zip_extract;
 
 use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
@@ -14,9 +15,10 @@ use anyhow::Context;
 use bollard::Docker;
 use oxde_config::AgentConfig;
 use oxde_proto::hub::v1::{
-    Chunk, HostStatsResult, PingRequest, SessionRequest, host_stats_result,
-    hub_service_client::HubServiceClient, session_request, session_response,
+    Chunk, PingRequest, SessionRequest, hub_service_client::HubServiceClient, session_request,
+    session_response,
 };
+use relay::RelayClient;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{ClientTlsConfig, Endpoint};
@@ -53,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
     containers::ensure_network(&docker)
         .await
         .context("failed to ensure the run-mode container network exists")?;
+    let relay_client = relay::new_client();
 
     let hub_addr = format!("https://{}", config.hub_addr);
 
@@ -62,8 +65,15 @@ async fn main() -> anyhow::Result<()> {
     // so a brief blip doesn't leave the agent waiting out a long backoff.
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
     loop {
-        if let Err(err) =
-            run_session(&config, &hub_addr, &data_dir, &docker, &mut reconnect_delay).await
+        if let Err(err) = run_session(
+            &config,
+            &hub_addr,
+            &data_dir,
+            &docker,
+            &relay_client,
+            &mut reconnect_delay,
+        )
+        .await
         {
             tracing::warn!(error = ?err, retry_in_secs = reconnect_delay.as_secs(), "hub session ended");
         }
@@ -81,6 +91,7 @@ async fn run_session(
     hub_addr: &str,
     data_dir: &Path,
     docker: &Docker,
+    relay_client: &RelayClient,
     reconnect_delay: &mut Duration,
 ) -> anyhow::Result<()> {
     tracing::info!(hub_addr, "dialing hub");
@@ -122,6 +133,7 @@ async fn run_session(
     tracing::info!("session opened, waiting for hub requests");
 
     let in_flight_uploads: InFlightUploads = Arc::new(Mutex::new(HashMap::new()));
+    let in_flight_relays = relay::InFlightRelays::default();
     while let Some(message) = inbound.message().await? {
         let Some(payload) = message.payload else {
             continue;
@@ -130,6 +142,18 @@ async fn run_session(
 
         if let session_response::Payload::UploadZipAndExtract(req) = payload {
             route_upload_chunk(&in_flight_uploads, data_dir, request_id, req, tx.clone()).await;
+            continue;
+        }
+        if let session_response::Payload::RelayHttpRequest(req) = payload {
+            relay::route_relay_message(
+                &in_flight_relays,
+                docker,
+                relay_client,
+                request_id,
+                req,
+                tx.clone(),
+            )
+            .await;
             continue;
         }
 
@@ -196,16 +220,11 @@ async fn handle_request(
 ) {
     match payload {
         session_response::Payload::GetHostStats(_) => {
-            let result = match host_stats::collect(data_dir).await {
-                Ok(stats) => host_stats_result::Result::Ok(stats),
-                Err(err) => host_stats_result::Result::Error(err.to_string()),
-            };
+            let result = handlers::get_host_stats(data_dir).await;
             send(
                 &tx,
                 request_id,
-                session_request::Payload::HostStatsResult(HostStatsResult {
-                    result: Some(result),
-                }),
+                session_request::Payload::HostStatsResult(result),
             )
             .await;
         }
@@ -248,15 +267,6 @@ async fn handle_request(
             )
             .await;
         }
-        session_response::Payload::GetContainerIp(req) => {
-            let result = handlers::get_container_ip(docker, req).await;
-            send(
-                &tx,
-                request_id,
-                session_request::Payload::GetContainerIpResult(result),
-            )
-            .await;
-        }
         session_response::Payload::CreateDeploymentDir(req) => {
             let result = handlers::create_deployment_dir(data_dir, &req.deployment_id);
             send(
@@ -284,9 +294,10 @@ async fn handle_request(
             )
             .await;
         }
-        // Routed to `route_upload_chunk` in the main loop before reaching
-        // this dispatch - never seen here.
-        session_response::Payload::UploadZipAndExtract(_) => {}
+        // Routed to `route_upload_chunk`/`relay::route_relay_message` in
+        // the main loop before reaching this dispatch - never seen here.
+        session_response::Payload::UploadZipAndExtract(_)
+        | session_response::Payload::RelayHttpRequest(_) => {}
         // Exercised only by oxde-hub's own AgentLink tests, which play the
         // agent role directly against the proto types - the real agent
         // never needs to answer these.

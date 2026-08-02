@@ -215,7 +215,7 @@ function HostIpField({ host }: { host: HostView }) {
     <div className="flex flex-col gap-2">
       <Label htmlFor={`host-ip-${host.id}`}>IP address</Label>
       <p className="text-sm text-muted-foreground">
-        Point a DNS record at this address to reach apps on this host.
+        Tracked for reference only.
         {host.last_connected_ip && host.last_connected_ip !== host.ip && (
           <> Agent last connected from {host.last_connected_ip}.</>
         )}

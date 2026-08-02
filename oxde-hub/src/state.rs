@@ -5,7 +5,6 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
 };
 
 use papaya::HashMap as ConcurrentHashMap;
@@ -15,13 +14,7 @@ use crate::{
     agent_link::{AgentLink, AgentRegistry},
     auth::LoginAttempts,
     deployment_logs::LogRegistry,
-    reverse_proxy::ProxyClient,
 };
-
-/// How long a resolved container IP is trusted before `container_ip` is
-/// asked again - bounds how long routing can stay wrong after a container
-/// crashes and Podman's restart policy respawns it with a new IP.
-const CONTAINER_IP_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,7 +25,6 @@ impl AppState {
     pub fn new(
         data_dir: PathBuf,
         limits: AppStateLimits,
-        proxy_client: ProxyClient,
         db: toasty::Db,
         agent_registry: AgentRegistry,
     ) -> Self {
@@ -49,8 +41,6 @@ impl AppState {
                 build_timeout_secs: limits.build_timeout_secs,
                 api_token_max_expiry_days: limits.api_token_max_expiry_days,
                 enable_mcp: limits.enable_mcp,
-                proxy_client,
-                container_ips: ConcurrentHashMap::new(),
                 db,
                 sessions: ConcurrentHashMap::new(),
                 login_attempts: ConcurrentHashMap::new(),
@@ -83,33 +73,6 @@ impl AppState {
 
     pub fn login_attempts(&self) -> &ConcurrentHashMap<IpAddr, LoginAttempts> {
         &self.inner.login_attempts
-    }
-
-    pub fn proxy_client(&self) -> &ProxyClient {
-        &self.inner.proxy_client
-    }
-
-    pub fn cached_container_ip(&self, container_name: &str) -> Option<String> {
-        self.inner
-            .container_ips
-            .pin()
-            .get(container_name)
-            .and_then(|(ip, cached_at)| {
-                (cached_at.elapsed() < CONTAINER_IP_TTL).then(|| ip.clone())
-            })
-    }
-
-    pub fn cache_container_ip(&self, container_name: &str, ip: String) {
-        self.inner
-            .container_ips
-            .pin()
-            .insert(container_name.to_string(), (ip, Instant::now()));
-    }
-
-    /// Drops a cached IP immediately instead of waiting out
-    /// [`CONTAINER_IP_TTL`] - used once a proxied request finds it stale.
-    pub fn evict_container_ip(&self, container_name: &str) {
-        self.inner.container_ips.pin().remove(container_name);
     }
 
     pub fn max_upload_bytes(&self) -> u64 {
@@ -202,8 +165,6 @@ struct Inner {
     build_timeout_secs: u64,
     api_token_max_expiry_days: i64,
     enable_mcp: bool,
-    proxy_client: ProxyClient,
-    container_ips: ConcurrentHashMap<String, (String, Instant)>,
     db: toasty::Db,
     sessions: ConcurrentHashMap<String, crate::auth::Session>,
     login_attempts: ConcurrentHashMap<IpAddr, LoginAttempts>,

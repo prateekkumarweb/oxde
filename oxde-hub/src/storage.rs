@@ -1262,7 +1262,6 @@ mod tests {
                 api_token_max_expiry_days: 30,
                 enable_mcp: false,
             },
-            crate::reverse_proxy::new_client(),
             db,
             AgentRegistry::new(),
         )

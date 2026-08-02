@@ -15,7 +15,6 @@ mod git_fetch;
 mod grpc;
 mod host_stats;
 mod reconcile;
-mod reverse_proxy;
 mod routes;
 mod state;
 mod storage;
@@ -89,7 +88,6 @@ async fn main() -> anyhow::Result<()> {
             api_token_max_expiry_days: config.api_token_max_expiry_days,
             enable_mcp: config.enable_mcp,
         },
-        reverse_proxy::new_client(),
         db,
         agent_link::AgentRegistry::new(),
     );

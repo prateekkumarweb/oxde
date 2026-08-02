@@ -83,7 +83,7 @@ function AppHostIp({ hosts, hostId }: { hosts: HostView[] | undefined; hostId: n
   }
   return (
     <p className="text-sm text-muted-foreground">
-      Point a DNS record at <code>{host.ip}</code> to reach apps on this host.
+      Host IP: <code>{host.ip}</code>
     </p>
   );
 }

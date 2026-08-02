@@ -165,7 +165,6 @@ mod tests {
                 api_token_max_expiry_days: 30,
                 enable_mcp: false,
             },
-            crate::reverse_proxy::new_client(),
             db,
             AgentRegistry::new(),
         )
@@ -427,6 +426,76 @@ mod tests {
             .await
             .expect("must not hang past the disconnect");
         assert!(received.is_none(), "stream must close, not deliver a chunk");
+    }
+
+    /// Proves `call_bidi_streamed`'s defining trait: the hub reads a reply
+    /// before it has finished sending, not after - a fake agent echoes
+    /// each chunk back immediately, and the hub only unblocks its second
+    /// send once the first echo has already arrived.
+    #[tokio::test]
+    async fn call_bidi_streamed_reads_replies_while_still_sending() {
+        let (state, hub_addr, ca_cert, host_id, token) = spawn_test_hub().await;
+        let (ready_tx, ready_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            let mut client = connect_test_client(hub_addr, ca_cert).await;
+            let (tx, rx) = mpsc::channel(16);
+            let mut inbound = client
+                .session(session_request(ReceiverStream::new(rx), &token))
+                .await
+                .expect("open session")
+                .into_inner();
+            let _ = ready_tx.send(());
+
+            while let Some(message) = inbound.message().await.expect("recv") {
+                let Some(session_response::Payload::EchoUpload(chunk)) = message.payload else {
+                    panic!("expected an EchoUpload chunk");
+                };
+                let is_final = chunk.is_final;
+                tx.send(SessionRequest {
+                    request_id: message.request_id,
+                    payload: Some(session_request::Payload::EchoStreamChunk(chunk)),
+                })
+                .await
+                .expect("echo chunk back");
+                if is_final {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        });
+        ready_rx.await.expect("fake agent ready");
+
+        let agent_link = state.agent_registry().for_host(host_id);
+        let outgoing = futures_util::stream::iter([
+            session_response::Payload::EchoUpload(Chunk {
+                data: b"one".to_vec(),
+                is_final: false,
+            }),
+            session_response::Payload::EchoUpload(Chunk {
+                data: b"two".to_vec(),
+                is_final: true,
+            }),
+        ]);
+        let (request_id, mut rx) = agent_link
+            .call_bidi_streamed(outgoing)
+            .await
+            .expect("call_bidi_streamed");
+
+        let mut echoed = Vec::new();
+        for _ in 0..2 {
+            let payload = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("no timeout")
+                .expect("channel open");
+            let session_request::Payload::EchoStreamChunk(chunk) = payload else {
+                panic!("expected an EchoStreamChunk");
+            };
+            echoed.push(chunk.data);
+        }
+        agent_link.end_stream(request_id).await;
+
+        assert_eq!(echoed, vec![b"one".to_vec(), b"two".to_vec()]);
     }
 
     #[tokio::test]
