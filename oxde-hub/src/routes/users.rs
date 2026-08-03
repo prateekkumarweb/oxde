@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{delete, get, patch},
 };
-use oxde_db::models::{ApiToken as DbApiToken, User};
+use oxde_db::models::{ApiToken as DbApiToken, AppPermission as DbAppPermission, User};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -174,11 +174,26 @@ async fn delete_user(
         ));
     }
 
-    // TODO: this leaves `username` in any app's `permissions` list (still
-    // JSON-file-backed) as a dangling grant, which a later user recreated
-    // under the same name would silently inherit. Handle it once app
-    // permissions move into the DB alongside `users`.
     let mut db = state.db().clone();
+    let user = User::all()
+        .filter(User::fields().username().eq(&username))
+        .first()
+        .exec(&mut db)
+        .await
+        .map_err(AppError::Db)?
+        .ok_or_else(|| AppError::UserNotFound(username.clone()))?;
+
+    // Deleted before the user row itself so no window exists where the user
+    // is gone but its grants aren't - `load_permissions` already tolerates
+    // an orphaned grant (skips it), but there's no reason to leave one
+    // behind when we know exactly which rows to remove.
+    DbAppPermission::all()
+        .filter(DbAppPermission::fields().user_id().eq(user.id))
+        .delete()
+        .exec(&mut db)
+        .await
+        .map_err(AppError::Db)?;
+
     User::all()
         .filter(User::fields().username().eq(&username))
         .delete()
