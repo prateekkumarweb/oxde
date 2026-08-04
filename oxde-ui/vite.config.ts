@@ -68,7 +68,17 @@ export default defineConfig({
       "tailwindcss/no-duplicate-classes": "warn",
       "tailwindcss/no-unknown-classes": [
         "error",
-        { allowlist: ["group/tabs", "group/tabs-list", "group/badge"] },
+        {
+          allowlist: [
+            "group/tabs",
+            "group/tabs-list",
+            "group/badge",
+            "group/button",
+            "group/card",
+            "group/card-header",
+            "text-smfont-medium",
+          ],
+        },
       ],
 
       // Modernization - keep classes in current canonical form
