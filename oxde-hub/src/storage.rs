@@ -940,6 +940,7 @@ pub fn clone_repo(
     staging: &Path,
     git_source: &GitSource,
     log_target: Option<crate::deployment_logs::LogTarget>,
+    should_interrupt: &std::sync::atomic::AtomicBool,
 ) -> AppResult<(std::path::PathBuf, String)> {
     std::fs::create_dir(staging)?;
     let checkout_dir = staging.join("_checkout");
@@ -948,6 +949,7 @@ pub fn clone_repo(
         &git_source.branch,
         &checkout_dir,
         log_target,
+        should_interrupt,
     )?;
     std::fs::remove_dir_all(checkout_dir.join(".git"))?;
     Ok((checkout_dir, commit_sha))

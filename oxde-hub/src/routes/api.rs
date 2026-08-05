@@ -1,4 +1,11 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
@@ -344,18 +351,26 @@ async fn execute_git_deployment(
         kind: LogKind::Clone,
         registry: state.log_registry().clone(),
     };
+    let clone_permit = state.acquire_git_fetch_permit().await?;
+    let should_interrupt = Arc::new(AtomicBool::new(false));
     let clone_result = {
         let blocking_staging = staging.clone();
         let blocking_git_source = git_source.clone();
-        tokio::time::timeout(
-            timeout,
-            tokio::task::spawn_blocking(move || {
-                storage::clone_repo(&blocking_staging, &blocking_git_source, Some(clone_target))
-            }),
-        )
-        .await
+        let blocking_interrupt = should_interrupt.clone();
+        tokio::task::spawn_blocking(move || {
+            // Keep the permit until this thread has actually exited, even
+            // after the async timeout fires and requests cancellation.
+            let _clone_permit = clone_permit;
+            storage::clone_repo(
+                &blocking_staging,
+                &blocking_git_source,
+                Some(clone_target),
+                &blocking_interrupt,
+            )
+        })
     };
-    let (checkout_dir, commit_sha) = match clone_result {
+    let mut clone_task = clone_result;
+    let (checkout_dir, commit_sha) = match tokio::time::timeout(timeout, &mut clone_task).await {
         Ok(Ok(Ok(result))) => result,
         Ok(Ok(Err(err))) => {
             storage::remove_dir_all_logged(&staging);
@@ -366,6 +381,13 @@ async fn execute_git_deployment(
             return Err(AppError::Io(std::io::Error::other(join_err.to_string())));
         }
         Err(_) => {
+            should_interrupt.store(true, Ordering::Relaxed);
+            // `spawn_blocking` can't be force-cancelled. `gix` observes the
+            // shared flag above, then this await proves it has stopped before
+            // its staging directory is removed.
+            if let Err(join_err) = clone_task.await {
+                tracing::error!(error = %join_err, app_id, deployment_id, "cancelled git fetch task failed to join");
+            }
             storage::remove_dir_all_logged(&staging);
             return Err(AppError::Git("timed out waiting for git fetch".to_string()));
         }

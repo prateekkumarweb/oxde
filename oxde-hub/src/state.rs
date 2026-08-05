@@ -8,13 +8,20 @@ use std::{
 };
 
 use papaya::HashMap as ConcurrentHashMap;
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
+use tokio::sync::{
+    Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard, OwnedSemaphorePermit, Semaphore,
+};
 
 use crate::{
     agent_link::{AgentLink, AgentRegistry},
     auth::LoginAttempts,
     deployment_logs::LogRegistry,
+    error::{AppError, AppResult},
 };
+
+/// Git fetches are CPU-, memory-, disk-, and network-intensive. Keeping this
+/// small is especially important on the single-board computers `OxDe` targets.
+const MAX_CONCURRENT_GIT_FETCHES: usize = 2;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,6 +39,7 @@ impl AppState {
             inner: Arc::new(Inner {
                 data_dir,
                 write_lock: AsyncMutex::new(()),
+                git_fetches: Arc::new(Semaphore::new(MAX_CONCURRENT_GIT_FETCHES)),
                 id_seq: AtomicU64::new(0),
                 max_upload_bytes: limits.max_upload_bytes,
                 max_uncompressed_bytes: limits.max_uncompressed_bytes,
@@ -142,6 +150,18 @@ impl AppState {
         self.inner.write_lock.lock().await
     }
 
+    /// Reserves one of the bounded git-fetch slots. The caller keeps the
+    /// permit inside the blocking clone task, so timed-out fetches continue
+    /// to count until their cooperative cancellation has actually finished.
+    pub async fn acquire_git_fetch_permit(&self) -> AppResult<OwnedSemaphorePermit> {
+        self.inner
+            .git_fetches
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::Git("git fetch limiter closed".to_string()))
+    }
+
     pub fn next_seq(&self) -> u64 {
         self.inner.id_seq.fetch_add(1, Ordering::Relaxed)
     }
@@ -156,6 +176,7 @@ impl AppState {
 struct Inner {
     data_dir: PathBuf,
     write_lock: AsyncMutex<()>,
+    git_fetches: Arc<Semaphore>,
     id_seq: AtomicU64,
     max_upload_bytes: u64,
     max_uncompressed_bytes: u64,

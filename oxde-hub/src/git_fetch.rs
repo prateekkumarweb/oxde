@@ -21,16 +21,19 @@ use crate::{
 
 /// Shallow (depth 1), single-branch clone + checkout of `repo_url` at
 /// `branch` into `dest`. Returns the checked-out commit's SHA. `log_target`,
-/// if given, receives clone progress as it happens.
+/// if given, receives clone progress as it happens. `should_interrupt` is
+/// checked by `gix` while fetching and checking out, allowing the caller to
+/// cooperatively cancel a timed-out blocking clone before removing `dest`.
 pub fn clone_shallow(
     repo_url: &str,
     branch: &str,
     dest: &Path,
     log_target: Option<LogTarget>,
+    should_interrupt: &AtomicBool,
 ) -> AppResult<String> {
+    check_interrupted(should_interrupt)?;
     ensure_host_is_public(repo_url)?;
-
-    let should_interrupt = AtomicBool::new(false);
+    check_interrupted(should_interrupt)?;
     let progress = CloneProgress::start(log_target);
 
     let mut prepare = gix::prepare_clone(repo_url, dest)
@@ -41,16 +44,23 @@ pub fn clone_shallow(
         .with_shallow(gix::remote::fetch::Shallow::DepthAtRemote(NonZeroU32::MIN));
 
     let (mut checkout, _) = prepare
-        .fetch_then_checkout(progress.clone(), &should_interrupt)
+        .fetch_then_checkout(progress.clone(), should_interrupt)
         .map_err(|err| AppError::Git(err.to_string()))?;
     let (repo, _) = checkout
-        .main_worktree(progress, &should_interrupt)
+        .main_worktree(progress, should_interrupt)
         .map_err(|err| AppError::Git(err.to_string()))?;
 
     let head_id = repo
         .head_id()
         .map_err(|err| AppError::Git(err.to_string()))?;
     Ok(head_id.to_string())
+}
+
+fn check_interrupted(should_interrupt: &AtomicBool) -> AppResult<()> {
+    if should_interrupt.load(Ordering::Relaxed) {
+        return Err(AppError::Git("git fetch interrupted".to_string()));
+    }
+    Ok(())
 }
 
 /// Rejects `repo_url` unless every address its host resolves to is
@@ -348,8 +358,22 @@ pub fn resolve_publish_dir(checkout_dir: &Path, publish_dir: Option<&str>) -> Ap
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_host_is_public, is_public_ipv4, is_public_ipv6, resolve_publish_dir};
+    use std::sync::atomic::AtomicBool;
+
+    use super::{
+        check_interrupted, ensure_host_is_public, is_public_ipv4, is_public_ipv6,
+        resolve_publish_dir,
+    };
     use crate::error::AppError;
+
+    #[test]
+    fn interrupted_fetch_is_rejected_before_starting_work() {
+        let interrupted = AtomicBool::new(true);
+        let result = check_interrupted(&interrupted);
+        assert!(
+            matches!(result, Err(AppError::Git(message)) if message == "git fetch interrupted")
+        );
+    }
 
     #[test]
     fn ipv4_private_and_reserved_ranges_are_rejected() {
