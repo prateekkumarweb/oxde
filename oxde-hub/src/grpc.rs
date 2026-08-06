@@ -134,6 +134,7 @@ mod tests {
     use super::*;
     use crate::{
         agent_link::AgentRegistry,
+        secrets,
         state::{AppState, AppStateLimits},
         storage,
     };
@@ -153,6 +154,7 @@ mod tests {
         oxde_db::apply_migrations(&db)
             .await
             .expect("apply test database migrations");
+        let secrets_key = secrets::load_or_generate(&dir).expect("load test secrets key");
         AppState::new(
             dir,
             AppStateLimits {
@@ -167,6 +169,7 @@ mod tests {
             },
             db,
             AgentRegistry::new(),
+            secrets_key,
         )
     }
 

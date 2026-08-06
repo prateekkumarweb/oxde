@@ -16,6 +16,7 @@ mod grpc;
 mod host_stats;
 mod reconcile;
 mod routes;
+mod secrets;
 mod state;
 mod storage;
 mod tls;
@@ -63,6 +64,9 @@ async fn main() -> anyhow::Result<()> {
 
     let agent_tls = agent_tls::load_or_generate(&data_dir)
         .context("failed to load or generate the hub<->agent TLS certificate")?;
+
+    let secrets_key = secrets::load_or_generate(&data_dir)
+        .context("failed to load or generate the secrets encryption key")?;
     tracing::info!(
         fingerprint = agent_tls.fingerprint_hex,
         "hub<->agent gRPC certificate fingerprint - set hub_tls_fingerprint in oxde-agent.toml on \
@@ -90,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
         },
         db,
         agent_link::AgentRegistry::new(),
+        secrets_key,
     );
 
     bootstrap_admin(&state, &config.admin_username, &config.admin_password)

@@ -121,12 +121,13 @@ async fn reconcile_app(state: &AppState, app: &App) -> AppResult<()> {
     };
 
     tracing::info!(app = app.name, "starting run-mode container");
+    let env_vars = storage::decrypt_env_vars(state, &app.env_vars)?;
     containers::start(
         &state.agent_link_for(app.host_id),
         &deployment_id,
         container_name,
         run_config,
-        &app.env_vars,
+        &env_vars,
         std::time::Duration::from_secs(state.install_timeout_secs()),
         None, // install already ran on a previous startup
     )

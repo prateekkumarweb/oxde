@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 fn env_strings(env_vars: &[EnvVar]) -> Vec<String> {
     env_vars
         .iter()
-        .map(|env_var| format!("{}={}", env_var.key, env_var.value))
+        .map(|env_var| format!("{}={}", env_var.key, env_var.value.as_str()))
         .collect()
 }
 

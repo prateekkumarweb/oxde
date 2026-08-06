@@ -368,7 +368,7 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue, Method};
 
     use super::*;
-    use crate::{agent_link::AgentRegistry, state::AppStateLimits};
+    use crate::{agent_link::AgentRegistry, secrets, state::AppStateLimits};
 
     /// A fresh `AppState` over its own tempdir, so tests never share state.
     async fn test_state(label: &str) -> AppState {
@@ -384,6 +384,7 @@ mod tests {
         oxde_db::apply_migrations(&db)
             .await
             .expect("apply test accounts database migrations");
+        let secrets_key = secrets::load_or_generate(&dir).expect("load test secrets key");
         AppState::new(
             dir,
             AppStateLimits {
@@ -398,6 +399,7 @@ mod tests {
             },
             db,
             AgentRegistry::new(),
+            secrets_key,
         )
     }
 

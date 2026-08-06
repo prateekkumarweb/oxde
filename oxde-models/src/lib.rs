@@ -95,10 +95,48 @@ impl PermissionLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[ts(export)]
+pub enum EnvVarValue {
+    Plain(String),
+    /// Ciphertext.
+    Secret(String),
+}
+
+impl EnvVarValue {
+    /// The raw string payload regardless of variant - callers that only
+    /// need a `KEY=value` pair (e.g. injecting into a container) don't care
+    /// whether it's plaintext or (already-decrypted) ciphertext.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Plain(value) | Self::Secret(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[ts(export)]
 pub struct EnvVar {
     pub key: String,
-    pub value: String,
+    pub value: EnvVarValue,
+}
+
+/// Create/update wire type. `Secret(None)` means "keep the existing
+/// encrypted value" (update only).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[ts(export)]
+pub enum EnvVarInputValue {
+    Plain(String),
+    Secret(Option<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[ts(export)]
+pub struct EnvVarInput {
+    pub key: String,
+    pub value: EnvVarInputValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
@@ -212,23 +250,22 @@ pub fn validate_run_config(run: &RunConfig) -> ModelResult<()> {
     Ok(())
 }
 
+fn valid_env_var_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// # Errors
 ///
 /// Returns `ModelError::InvalidEnvVar` for the first key that isn't a valid
 /// identifier (`[A-Za-z_][A-Za-z0-9_]*`).
-pub fn validate_env_vars(env_vars: &[EnvVar]) -> ModelResult<()> {
+pub fn validate_env_var_inputs(env_vars: &[EnvVarInput]) -> ModelResult<()> {
     for env_var in env_vars {
-        let valid = !env_var.key.is_empty()
-            && env_var
-                .key
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && env_var
-                .key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !valid {
+        if !valid_env_var_key(&env_var.key) {
             return Err(ModelError::InvalidEnvVar(env_var.key.clone()));
         }
     }

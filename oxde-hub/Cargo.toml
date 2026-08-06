@@ -12,6 +12,7 @@ axum = { workspace = true, features = ["multipart"] }
 axum-server = { workspace = true, features = ["tls-rustls"] }
 base64.workspace = true
 bytes.workspace = true
+chacha20poly1305.workspace = true
 futures-util.workspace = true
 gix = { workspace = true, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
 hyper = { workspace = true, features = ["server", "http1"] }
@@ -42,5 +43,6 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 ts-rs = { workspace = true, features = ["jiff-impl"] }
 uuid = { workspace = true, features = ["v7"] }
+zeroize.workspace = true
 zip.workspace = true
 oxde-config.workspace = true

@@ -12,9 +12,10 @@ use oxde_db::models::{
     PermissionLevel as DbPermissionLevel, User as DbUser,
 };
 use oxde_models::{
-    App, AppPermission, AppSource, BuildInfo, Deployment, DeploymentStatus, EnvVar, GitDeployMode,
-    GitDeploymentInfo, GitSource, PermissionLevel, validate_build_config, validate_env_vars,
-    validate_repo_url, validate_run_config, validate_slug,
+    App, AppPermission, AppSource, BuildInfo, Deployment, DeploymentStatus, EnvVar, EnvVarInput,
+    EnvVarInputValue, EnvVarValue, GitDeployMode, GitDeploymentInfo, GitSource, PermissionLevel,
+    validate_build_config, validate_env_var_inputs, validate_repo_url, validate_run_config,
+    validate_slug,
 };
 use toasty::Db;
 use uuid::Uuid;
@@ -515,6 +516,60 @@ fn app_from_row(row: DbApp, permissions: Vec<AppPermission>) -> AppResult<App> {
     })
 }
 
+/// Turns `EnvVarInput`s into storable `EnvVar`s: encrypts secret values,
+/// and for `value: None` secrets, carries over the existing ciphertext from
+/// `existing` (looked up by key) rather than requiring a fresh value on
+/// every update.
+fn resolve_env_var_inputs(
+    state: &AppState,
+    inputs: Vec<EnvVarInput>,
+    existing: &[EnvVar],
+) -> AppResult<Vec<EnvVar>> {
+    inputs
+        .into_iter()
+        .map(|input| {
+            let value = match input.value {
+                EnvVarInputValue::Plain(value) => EnvVarValue::Plain(value),
+                EnvVarInputValue::Secret(Some(value)) if !value.is_empty() => {
+                    EnvVarValue::Secret(state.secrets_key().encrypt(&value)?)
+                }
+                EnvVarInputValue::Secret(Some(_)) => {
+                    return Err(AppError::InvalidEnvVar(input.key.clone()));
+                }
+                EnvVarInputValue::Secret(None) => existing
+                    .iter()
+                    .find(|env_var| {
+                        env_var.key == input.key && matches!(env_var.value, EnvVarValue::Secret(_))
+                    })
+                    .map(|env_var| env_var.value.clone())
+                    .ok_or_else(|| AppError::InvalidEnvVar(input.key.clone()))?,
+            };
+            Ok(EnvVar {
+                key: input.key,
+                value,
+            })
+        })
+        .collect()
+}
+
+/// Decrypts secret values so a container/build command gets plaintext env
+/// vars - never persisted, only built right before an agent call.
+pub fn decrypt_env_vars(state: &AppState, env_vars: &[EnvVar]) -> AppResult<Vec<EnvVar>> {
+    env_vars
+        .iter()
+        .map(|env_var| {
+            let value = match &env_var.value {
+                EnvVarValue::Plain(value) => value.clone(),
+                EnvVarValue::Secret(ciphertext) => state.secrets_key().decrypt(ciphertext)?,
+            };
+            Ok(EnvVar {
+                key: env_var.key.clone(),
+                value: EnvVarValue::Plain(value),
+            })
+        })
+        .collect()
+}
+
 /// Rejects an unknown or revoked host - assigning an app to one would
 /// silently route its commands nowhere.
 async fn validate_host_id(db: &mut Db, host_id: i64) -> AppResult<()> {
@@ -573,12 +628,13 @@ pub async fn create_app(
     state: &AppState,
     name: &str,
     source: AppSource,
-    env_vars: Vec<EnvVar>,
+    env_vars: Vec<EnvVarInput>,
     creator: Option<&str>,
     host_id: i64,
 ) -> AppResult<App> {
     validate_slug(name)?;
-    validate_env_vars(&env_vars)?;
+    validate_env_var_inputs(&env_vars)?;
+    let env_vars = resolve_env_var_inputs(state, env_vars, &[])?;
     if let AppSource::Git(ref git_source) = source {
         validate_repo_url(&git_source.repo_url)?;
         match &git_source.mode {
@@ -682,14 +738,20 @@ pub async fn update_app(
     state: &AppState,
     app_id: &str,
     name: Option<&str>,
-    env_vars: Option<Vec<EnvVar>>,
+    env_vars: Option<Vec<EnvVarInput>>,
     host_id: Option<i64>,
 ) -> AppResult<App> {
     if let Some(env_vars) = &env_vars {
-        validate_env_vars(env_vars)?;
+        validate_env_var_inputs(env_vars)?;
     }
     let mut db = state.db().clone();
     let mut row = find_app_row_by_id(&mut db, app_id).await?;
+    let env_vars = env_vars
+        .map(|env_vars| {
+            let existing: Vec<EnvVar> = serde_json::from_str(&row.env_vars_json)?;
+            resolve_env_var_inputs(state, env_vars, &existing)
+        })
+        .transpose()?;
     if let Some(host_id) = host_id {
         validate_host_id(&mut db, host_id).await?;
     }
@@ -1223,17 +1285,21 @@ pub async fn delete_deployment(
 mod tests {
     use std::io::Cursor;
 
-    use oxde_models::{AppSource, DeploymentStatus, GitDeployMode, GitSource};
+    use oxde_models::{
+        AppSource, DeploymentStatus, EnvVarInput, EnvVarInputValue, EnvVarValue, GitDeployMode,
+        GitSource,
+    };
 
     use super::{
         activate_deployment, create_app, create_deployment, create_host,
-        create_pending_git_deployment, delete_app, delete_deployment, find_host_by_token, get_app,
-        get_app_by_id, list_apps, list_deployments, list_hosts, revoke_host, touch_host_last_seen,
-        update_app, update_host_ip,
+        create_pending_git_deployment, decrypt_env_vars, delete_app, delete_deployment,
+        find_host_by_token, get_app, get_app_by_id, list_apps, list_deployments, list_hosts,
+        revoke_host, touch_host_last_seen, update_app, update_host_ip,
     };
     use crate::{
         agent_link::AgentRegistry,
         error::AppError,
+        secrets,
         state::{AppState, AppStateLimits},
     };
 
@@ -1252,6 +1318,7 @@ mod tests {
         oxde_db::apply_migrations(&db)
             .await
             .expect("apply test accounts database migrations");
+        let secrets_key = secrets::load_or_generate(&dir).expect("load test secrets key");
         AppState::new(
             dir,
             AppStateLimits {
@@ -1266,6 +1333,7 @@ mod tests {
             },
             db,
             AgentRegistry::new(),
+            secrets_key,
         )
     }
 
@@ -1468,6 +1536,100 @@ mod tests {
             .await
             .expect_err("renaming to an existing name must be rejected");
         assert!(matches!(err, AppError::AppAlreadyExists(_)));
+    }
+
+    #[tokio::test]
+    async fn secret_env_vars_are_encrypted_at_rest_and_decrypt_for_containers() {
+        let state = test_state("secret-env-vars").await;
+        let host_id = test_host_id(&state).await;
+        let inputs = vec![
+            EnvVarInput {
+                key: "PUBLIC".to_string(),
+                value: EnvVarInputValue::Plain("visible".to_string()),
+            },
+            EnvVarInput {
+                key: "SECRET".to_string(),
+                value: EnvVarInputValue::Secret(Some("hunter2".to_string())),
+            },
+        ];
+        let app = create_app(&state, "blog", AppSource::Upload, inputs, None, host_id)
+            .await
+            .expect("create_app");
+
+        let secret = app
+            .env_vars
+            .iter()
+            .find(|env_var| env_var.key == "SECRET")
+            .expect("secret env var present");
+        match &secret.value {
+            EnvVarValue::Secret(ciphertext) => assert_ne!(ciphertext, "hunter2"),
+            EnvVarValue::Plain(_) => panic!("expected the stored value to be encrypted"),
+        }
+
+        let decrypted = decrypt_env_vars(&state, &app.env_vars).expect("decrypt_env_vars");
+        let secret = decrypted
+            .iter()
+            .find(|env_var| env_var.key == "SECRET")
+            .expect("secret env var present");
+        assert_eq!(secret.value.as_str(), "hunter2");
+    }
+
+    #[tokio::test]
+    async fn updating_env_vars_without_a_new_secret_value_keeps_the_existing_ciphertext() {
+        let state = test_state("secret-env-vars-update").await;
+        let host_id = test_host_id(&state).await;
+        let inputs = vec![EnvVarInput {
+            key: "SECRET".to_string(),
+            value: EnvVarInputValue::Secret(Some("hunter2".to_string())),
+        }];
+        let app = create_app(&state, "blog", AppSource::Upload, inputs, None, host_id)
+            .await
+            .expect("create_app");
+        let original_ciphertext = app.env_vars[0].value.as_str().to_string();
+
+        let unchanged = vec![EnvVarInput {
+            key: "SECRET".to_string(),
+            value: EnvVarInputValue::Secret(None),
+        }];
+        let updated = update_app(&state, &app.id, None, Some(unchanged), None)
+            .await
+            .expect("update_app");
+        assert_eq!(updated.env_vars[0].value.as_str(), original_ciphertext);
+
+        let decrypted = decrypt_env_vars(&state, &updated.env_vars).expect("decrypt_env_vars");
+        assert_eq!(decrypted[0].value.as_str(), "hunter2");
+    }
+
+    #[tokio::test]
+    async fn updating_a_secret_with_no_prior_value_is_rejected() {
+        let state = test_state("secret-env-vars-no-prior").await;
+        let host_id = test_host_id(&state).await;
+        let app = create_app(&state, "blog", AppSource::Upload, Vec::new(), None, host_id)
+            .await
+            .expect("create_app");
+
+        let inputs = vec![EnvVarInput {
+            key: "SECRET".to_string(),
+            value: EnvVarInputValue::Secret(None),
+        }];
+        let err = update_app(&state, &app.id, None, Some(inputs), None)
+            .await
+            .expect_err("no existing secret to preserve");
+        assert!(matches!(err, AppError::InvalidEnvVar(_)));
+    }
+
+    #[tokio::test]
+    async fn creating_a_secret_with_an_empty_value_is_rejected() {
+        let state = test_state("secret-env-vars-empty").await;
+        let host_id = test_host_id(&state).await;
+        let inputs = vec![EnvVarInput {
+            key: "SECRET".to_string(),
+            value: EnvVarInputValue::Secret(Some(String::new())),
+        }];
+        let err = create_app(&state, "blog", AppSource::Upload, inputs, None, host_id)
+            .await
+            .expect_err("empty secret value must be rejected");
+        assert!(matches!(err, AppError::InvalidEnvVar(_)));
     }
 
     #[tokio::test]

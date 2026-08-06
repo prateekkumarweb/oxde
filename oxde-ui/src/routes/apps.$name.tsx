@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, type ReactNode, useRef, useState } from "react";
 
-import type { AppPermission, EnvVar, HostView, RunImage } from "@/lib/types";
+import type { AppPermission, EnvVar, EnvVarInput, HostView, RunImage } from "@/lib/types";
 
 import { DeploymentLogs } from "@/components/deployment-logs";
 import { DeploymentStats } from "@/components/deployment-stats";
@@ -47,6 +47,15 @@ import {
 export const Route = createFileRoute("/apps/$name")({
   component: AppDetail,
 });
+
+// The server never returns a secret's real value - a masked row seeds an
+// edit session as "keep unchanged" until the user explicitly changes it.
+function seedEnvVarInput(envVar: EnvVar): EnvVarInput {
+  return {
+    key: envVar.key,
+    value: envVar.value.type === "secret" ? { type: "secret", value: null } : envVar.value,
+  };
+}
 
 const RUN_IMAGE_TAGS: Record<RunImage, string> = {
   node24: "node:24",
@@ -112,7 +121,7 @@ function AppDetail() {
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
-  const [localEnvVars, setLocalEnvVars] = useState<EnvVar[] | null>(null);
+  const [localEnvVars, setLocalEnvVars] = useState<EnvVarInput[] | null>(null);
   const [localPermissions, setLocalPermissions] = useState<AppPermission[] | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -165,7 +174,7 @@ function AppDetail() {
     }
   }
 
-  async function handleSaveEnvVars(envVars: EnvVar[]) {
+  async function handleSaveEnvVars(envVars: EnvVarInput[]) {
     const trimmed = envVars
       .map((envVar) => ({ key: envVar.key.trim(), value: envVar.value }))
       .filter((envVar) => envVar.key !== "");
@@ -234,8 +243,11 @@ function AppDetail() {
   const runConfig = gitSource?.mode.type === "run" ? gitSource.mode : null;
   const buildConfig = gitSource?.mode.type === "build" ? gitSource.mode : null;
   const publishDir = gitSource?.mode.type === "static" ? gitSource.mode.publish_dir : null;
-  const envVars = localEnvVars ?? app.env_vars;
+  const envVars = localEnvVars ?? app.env_vars.map(seedEnvVarInput);
   const envVarsDirty = localEnvVars !== null;
+  const hasEmptySecret = envVars.some(
+    (envVar) => envVar.value.type === "secret" && envVar.value.value === "",
+  );
   const permissions = localPermissions ?? app.permissions;
   const permissionsDirty = localPermissions !== null;
 
@@ -556,7 +568,7 @@ function AppDetail() {
               <EnvVarEditor envVars={envVars} onChange={setLocalEnvVars} />
               <Button
                 onClick={() => handleSaveEnvVars(envVars)}
-                disabled={busy || updateAppEnvVars.isPending || !envVarsDirty}
+                disabled={busy || updateAppEnvVars.isPending || !envVarsDirty || hasEmptySecret}
                 className="self-start"
               >
                 Save

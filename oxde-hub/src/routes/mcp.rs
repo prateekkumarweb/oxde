@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Router, extract::Request, http::request::Parts, middleware, response::Response};
-use oxde_models::{AppSource, EnvVar};
+use oxde_models::{AppSource, EnvVarInput};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::Extension, wrapper::Parameters},
@@ -34,7 +34,7 @@ struct CreateAppParams {
     #[serde(default)]
     source: AppSource,
     #[serde(default)]
-    env_vars: Vec<EnvVar>,
+    env_vars: Vec<EnvVarInput>,
 }
 
 #[derive(Deserialize, JsonSchema)]

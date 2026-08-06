@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 
-import type { AppSource, EnvVar, GitDeployMode, RunImage } from "@/lib/types";
+import type { AppSource, EnvVarInput, GitDeployMode, RunImage } from "@/lib/types";
 
 import { EnvVarEditor } from "@/components/env-var-editor";
 import { Button } from "@/components/ui/button";
@@ -54,7 +54,7 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
   const [startCommand, setStartCommand] = useState("");
   const [containerPort, setContainerPort] = useState("");
 
-  const [envVars, setEnvVars] = useState<EnvVar[]>([]);
+  const [envVars, setEnvVars] = useState<EnvVarInput[]>([]);
 
   const pending = createApp.isPending;
   const error =
@@ -94,7 +94,10 @@ export function CreateAppForm({ onCreated }: { onCreated: () => void }) {
     }
     const trimmedEnvVars = envVars
       .map((envVar) => ({ key: envVar.key.trim(), value: envVar.value }))
-      .filter((envVar) => envVar.key !== "");
+      .filter(
+        (envVar) =>
+          envVar.key !== "" && !(envVar.value.type === "secret" && envVar.value.value === ""),
+      );
     try {
       await createApp.mutateAsync({
         name,

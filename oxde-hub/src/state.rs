@@ -17,6 +17,7 @@ use crate::{
     auth::LoginAttempts,
     deployment_logs::LogRegistry,
     error::{AppError, AppResult},
+    secrets::SecretsKey,
 };
 
 /// Git fetches are CPU-, memory-, disk-, and network-intensive. Keeping this
@@ -34,10 +35,12 @@ impl AppState {
         limits: AppStateLimits,
         db: toasty::Db,
         agent_registry: AgentRegistry,
+        secrets_key: SecretsKey,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 data_dir,
+                secrets_key,
                 write_lock: AsyncMutex::new(()),
                 git_fetches: Arc::new(Semaphore::new(MAX_CONCURRENT_GIT_FETCHES)),
                 id_seq: AtomicU64::new(0),
@@ -73,6 +76,10 @@ impl AppState {
 
     pub fn db(&self) -> &toasty::Db {
         &self.inner.db
+    }
+
+    pub fn secrets_key(&self) -> &SecretsKey {
+        &self.inner.secrets_key
     }
 
     pub fn sessions(&self) -> &ConcurrentHashMap<String, crate::auth::Session> {
@@ -175,6 +182,7 @@ impl AppState {
 
 struct Inner {
     data_dir: PathBuf,
+    secrets_key: SecretsKey,
     write_lock: AsyncMutex<()>,
     git_fetches: Arc<Semaphore>,
     id_seq: AtomicU64,

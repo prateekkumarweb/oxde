@@ -18,7 +18,10 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
-use oxde_models::{AppPermission, AppSource, Deployment, EnvVar, GitDeployMode, GitSource};
+use oxde_models::{
+    AppPermission, AppSource, Deployment, EnvVar, EnvVarInput, EnvVarValue, GitDeployMode,
+    GitSource,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
@@ -102,6 +105,21 @@ pub struct AppView {
     pub(crate) permissions: Vec<AppPermission>,
 }
 
+const SECRET_MASK: &str = "••••••••";
+
+fn mask_secrets(env_vars: Vec<EnvVar>) -> Vec<EnvVar> {
+    env_vars
+        .into_iter()
+        .map(|env_var| match env_var.value {
+            EnvVarValue::Secret(_) => EnvVar {
+                value: EnvVarValue::Secret(SECRET_MASK.to_string()),
+                ..env_var
+            },
+            EnvVarValue::Plain(_) => env_var,
+        })
+        .collect()
+}
+
 pub async fn app_view(state: &AppState, app: oxde_models::App) -> AppView {
     let active_deployment_id = storage::active_deployment_id(state, &app.id).await;
     AppView {
@@ -112,7 +130,7 @@ pub async fn app_view(state: &AppState, app: oxde_models::App) -> AppView {
         active_deployment_id,
         host_id: app.host_id,
         source: app.source,
-        env_vars: app.env_vars,
+        env_vars: mask_secrets(app.env_vars),
         permissions: app.permissions,
     }
 }
@@ -173,13 +191,13 @@ struct CreateAppRequest {
     #[serde(default)]
     source: AppSource,
     #[serde(default)]
-    env_vars: Vec<EnvVar>,
+    env_vars: Vec<EnvVarInput>,
 }
 
 #[derive(Deserialize)]
 struct UpdateAppRequest {
     name: Option<String>,
-    env_vars: Option<Vec<EnvVar>>,
+    env_vars: Option<Vec<EnvVarInput>>,
     host_id: Option<i64>,
 }
 
@@ -402,6 +420,13 @@ async fn execute_git_deployment(
             kind: LogKind::Build,
             registry: state.log_registry().clone(),
         };
+        let env_vars = match storage::decrypt_env_vars(state, &app.env_vars) {
+            Ok(env_vars) => env_vars,
+            Err(err) => {
+                storage::remove_dir_all_logged(&staging);
+                return Err(err);
+            }
+        };
         if let Err(err) = containers::run_build_command(
             &state.agent_link_for(app.host_id),
             &container_name,
@@ -409,7 +434,7 @@ async fn execute_git_deployment(
             containers::BuildCommandConfig {
                 image: build.image.image_tag(),
                 command: &build.command,
-                env_vars: &app.env_vars,
+                env_vars: &env_vars,
                 timeout: build_timeout,
             },
             Some(build_target),
@@ -468,12 +493,13 @@ pub async fn activate_with_containers(
             kind: LogKind::Install,
             registry: state.log_registry().clone(),
         });
+        let env_vars = storage::decrypt_env_vars(state, &app.env_vars)?;
         containers::start(
             &state.agent_link_for(app.host_id),
             deployment_id,
             &container_name,
             run_config,
-            &app.env_vars,
+            &env_vars,
             Duration::from_secs(state.install_timeout_secs()),
             install_target,
         )

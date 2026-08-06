@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { AppPermission, AppSource, EnvVar } from "@/lib/types";
+import type { AppPermission, AppSource, EnvVarInput } from "@/lib/types";
 
 import { useApi } from "@/lib/api";
 
@@ -90,7 +90,7 @@ export function useCreateApp() {
       name: string;
       host_id: number;
       source?: AppSource;
-      env_vars?: EnvVar[];
+      env_vars?: EnvVarInput[];
     }) => api.createApp(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appsKey() }),
   });
@@ -100,7 +100,7 @@ export function useUpdateAppEnvVars(id: string) {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (envVars: EnvVar[]) => api.updateApp(id, { env_vars: envVars }),
+    mutationFn: (envVars: EnvVarInput[]) => api.updateApp(id, { env_vars: envVars }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: appKey(id) }),
   });
 }

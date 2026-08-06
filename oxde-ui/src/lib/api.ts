@@ -9,7 +9,7 @@ import type {
   CreateApiTokenResponse,
   CreateHostResponse,
   DeploymentView,
-  EnvVar,
+  EnvVarInput,
   HostStats,
   HostView,
   LogKind,
@@ -23,7 +23,7 @@ interface CreateAppInput {
   name: string;
   host_id: number;
   source?: AppSource;
-  env_vars?: EnvVar[];
+  env_vars?: EnvVarInput[];
 }
 
 interface CreateUserInput {
@@ -45,7 +45,7 @@ interface CreateApiTokenInput {
 
 interface UpdateAppInput {
   name?: string;
-  env_vars?: EnvVar[];
+  env_vars?: EnvVarInput[];
   host_id?: number;
 }
 
