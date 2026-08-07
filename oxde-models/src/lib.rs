@@ -262,10 +262,14 @@ fn valid_env_var_key(key: &str) -> bool {
 /// # Errors
 ///
 /// Returns `ModelError::InvalidEnvVar` for the first key that isn't a valid
-/// identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+/// identifier (`[A-Za-z_][A-Za-z0-9_]*`), or the first key that repeats.
 pub fn validate_env_var_inputs(env_vars: &[EnvVarInput]) -> ModelResult<()> {
+    let mut seen = std::collections::HashSet::new();
     for env_var in env_vars {
         if !valid_env_var_key(&env_var.key) {
+            return Err(ModelError::InvalidEnvVar(env_var.key.clone()));
+        }
+        if !seen.insert(env_var.key.as_str()) {
             return Err(ModelError::InvalidEnvVar(env_var.key.clone()));
         }
     }
@@ -370,7 +374,10 @@ pub fn validate_slug(name: &str) -> ModelResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Deployment, DeploymentStatus, GitDeployMode, GitSource, RunConfig, RunImage};
+    use super::{
+        Deployment, DeploymentStatus, EnvVarInput, EnvVarInputValue, GitDeployMode, GitSource,
+        ModelError, RunConfig, RunImage, validate_env_var_inputs,
+    };
 
     #[test]
     fn run_image_serializes_snake_case() {
@@ -497,5 +504,36 @@ mod tests {
                 json
             );
         }
+    }
+
+    #[test]
+    fn validate_env_var_inputs_rejects_duplicate_keys() {
+        let env_vars = vec![
+            EnvVarInput {
+                key: "API_KEY".to_string(),
+                value: EnvVarInputValue::Plain("one".to_string()),
+            },
+            EnvVarInput {
+                key: "API_KEY".to_string(),
+                value: EnvVarInputValue::Secret(Some("two".to_string())),
+            },
+        ];
+        let err = validate_env_var_inputs(&env_vars).expect_err("duplicate key must be rejected");
+        assert!(matches!(err, ModelError::InvalidEnvVar(key) if key == "API_KEY"));
+    }
+
+    #[test]
+    fn validate_env_var_inputs_accepts_unique_keys() {
+        let env_vars = vec![
+            EnvVarInput {
+                key: "API_KEY".to_string(),
+                value: EnvVarInputValue::Plain("one".to_string()),
+            },
+            EnvVarInput {
+                key: "OTHER_KEY".to_string(),
+                value: EnvVarInputValue::Secret(Some("two".to_string())),
+            },
+        ];
+        validate_env_var_inputs(&env_vars).expect("unique keys must be accepted");
     }
 }

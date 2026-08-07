@@ -248,6 +248,8 @@ function AppDetail() {
   const hasEmptySecret = envVars.some(
     (envVar) => envVar.value.type === "secret" && envVar.value.value === "",
   );
+  const trimmedKeys = envVars.map((envVar) => envVar.key.trim()).filter((key) => key !== "");
+  const hasDuplicateKey = new Set(trimmedKeys).size !== trimmedKeys.length;
   const permissions = localPermissions ?? app.permissions;
   const permissionsDirty = localPermissions !== null;
 
@@ -568,7 +570,13 @@ function AppDetail() {
               <EnvVarEditor envVars={envVars} onChange={setLocalEnvVars} />
               <Button
                 onClick={() => handleSaveEnvVars(envVars)}
-                disabled={busy || updateAppEnvVars.isPending || !envVarsDirty || hasEmptySecret}
+                disabled={
+                  busy ||
+                  updateAppEnvVars.isPending ||
+                  !envVarsDirty ||
+                  hasEmptySecret ||
+                  hasDuplicateKey
+                }
                 className="self-start"
               >
                 Save
