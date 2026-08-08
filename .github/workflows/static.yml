@@ -1,4 +1,4 @@
-name: Deploy oxde.dev
+name: Deploy berth.prateek.page
 
 on:
   push:

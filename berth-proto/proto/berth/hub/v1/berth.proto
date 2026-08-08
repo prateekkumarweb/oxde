@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+package berth.hub.v1;
+
+service HubService {
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc Session(stream SessionRequest) returns (stream SessionResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string version = 1;
+}
+
+message SessionRequest {
+  uint64 request_id = 1;
+
+  oneof payload {
+    HostStatsResult host_stats_result = 2;
+    EchoUploadResult echo_upload_result = 3;
+    Chunk echo_stream_chunk = 4;
+    CommandOutput start_run_container_result = 5;
+    CommandOutput run_build_command_result = 6;
+    CommandResult stop_and_remove_container_result = 7;
+    IsContainerRunningResult is_container_running_result = 8;
+    ContainerStatsResult container_stats_result = 9;
+    Chunk stream_container_logs_chunk = 11;
+    CommandResult create_deployment_dir_result = 12;
+    CommandResult delete_deployment_dir_result = 13;
+    ListDeploymentDirsResult list_deployment_dirs_result = 14;
+    UploadZipAndExtractResult upload_zip_and_extract_result = 15;
+    RelayHttpResponse relay_http_response = 16;
+  }
+}
+
+message SessionResponse {
+  uint64 request_id = 1;
+
+  oneof payload {
+    GetHostStatsRequest get_host_stats = 2;
+    Chunk echo_upload = 3;
+    EchoStreamRequest echo_stream_request = 4;
+    StartRunContainerRequest start_run_container = 5;
+    RunBuildCommandRequest run_build_command = 6;
+    StopAndRemoveContainerRequest stop_and_remove_container = 7;
+    IsContainerRunningRequest is_container_running = 8;
+    ContainerStatsRequest container_stats = 9;
+    StreamContainerLogsRequest stream_container_logs = 11;
+    CreateDeploymentDirRequest create_deployment_dir = 12;
+    DeleteDeploymentDirRequest delete_deployment_dir = 13;
+    ListDeploymentDirsRequest list_deployment_dirs = 14;
+    UploadZipAndExtractRequest upload_zip_and_extract = 15;
+    RelayHttpRequest relay_http_request = 16;
+  }
+}
+
+message GetHostStatsRequest {}
+
+message Chunk {
+  bytes data = 1;
+  bool is_final = 2;
+}
+
+message EchoUploadResult {
+  uint64 bytes_received = 1;
+}
+
+message EchoStreamRequest {
+  uint32 chunk_count = 1;
+}
+
+message HostStatsResult {
+  oneof result {
+    HostStats ok = 1;
+    string error = 2;
+  }
+}
+
+message HostStats {
+  float cpu_percent = 1;
+  repeated float cpu_per_core_percent = 2;
+  uint64 memory_usage_bytes = 3;
+  uint64 memory_total_bytes = 4;
+  uint64 disk_usage_bytes = 5;
+  uint64 disk_total_bytes = 6;
+}
+
+message Empty {}
+
+enum AgentErrorKind {
+  AGENT_ERROR_KIND_UNSPECIFIED = 0;
+  AGENT_ERROR_KIND_UNAVAILABLE = 1;
+  AGENT_ERROR_KIND_START_FAILED = 2;
+  AGENT_ERROR_KIND_COMMAND_FAILED = 3;
+}
+
+message AgentError {
+  AgentErrorKind kind = 1;
+  string message = 2;
+}
+
+message CommandResult {
+  oneof result {
+    Empty ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message CommandOutput {
+  oneof output {
+    Chunk log = 1;
+    CommandResult result = 2;
+  }
+}
+
+message StartRunContainerRequest {
+  string deployment_id = 1;
+  string container_name = 2;
+  string run_config_json = 3;
+  string env_vars_json = 4;
+  uint64 install_timeout_secs = 5;
+}
+
+message RunBuildCommandRequest {
+  string container_name = 1;
+  string checkout_dir = 2;
+  string image = 3;
+  string command = 4;
+  string env_vars_json = 5;
+  uint64 timeout_secs = 6;
+}
+
+message StopAndRemoveContainerRequest {
+  string container_name = 1;
+  bool is_install = 2;
+}
+
+message IsContainerRunningRequest {
+  string container_name = 1;
+}
+
+message IsContainerRunningResult {
+  oneof result {
+    bool ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message ContainerStatsRequest {
+  string container_name = 1;
+}
+
+message ContainerStatsResult {
+  oneof result {
+    ContainerStats ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message ContainerStats {
+  double cpu_percent = 1;
+  uint64 memory_usage_bytes = 2;
+  uint64 memory_limit_bytes = 3;
+}
+
+message StreamContainerLogsRequest {
+  string container_name = 1;
+  bool follow = 2;
+}
+
+message CreateDeploymentDirRequest {
+  string deployment_id = 1;
+}
+
+message DeleteDeploymentDirRequest {
+  string deployment_id = 1;
+}
+
+message ListDeploymentDirsRequest {}
+
+message ListDeploymentDirsResult {
+  oneof result {
+    DeploymentIdList ok = 1;
+    AgentError error = 2;
+  }
+}
+
+message DeploymentIdList {
+  repeated string deployment_ids = 1;
+}
+
+message UploadZipAndExtractRequest {
+  string deployment_id = 1;
+  uint64 max_uncompressed_bytes = 2;
+  Chunk chunk = 3;
+}
+
+message UploadZipAndExtractResult {
+  oneof result {
+    uint64 content_size_bytes = 1;
+    AgentError error = 2;
+  }
+}
+
+message HttpHeader {
+  string name = 1;
+  string value = 2;
+}
+
+// Unlike every other RPC here, both directions stream concurrently under
+// one request_id - the request body out while the response streams back.
+message RelayHttpRequest {
+  oneof part {
+    RelayHttpRequestHead head = 1;
+    Chunk body_chunk = 2;
+  }
+}
+
+message RelayHttpRequestHead {
+  string method = 1;
+  string path = 2;
+  repeated HttpHeader headers = 3;
+  string container_name = 4;
+  uint32 container_port = 5;
+}
+
+message RelayHttpResponse {
+  oneof part {
+    RelayHttpResponseHead head = 1;
+    Chunk body_chunk = 2;
+    AgentError error = 3;
+  }
+}
+
+message RelayHttpResponseHead {
+  uint32 status = 1;
+  repeated HttpHeader headers = 2;
+}

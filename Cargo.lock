@@ -408,6 +408,126 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "berth-agent"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "berth-config",
+ "berth-models",
+ "berth-proto",
+ "bollard",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
+]
+
+[[package]]
+name = "berth-config"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "berth-proto",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "berth-db"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "toasty",
+ "toasty-core",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "berth-hub"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "axum-server",
+ "base64 0.23.0",
+ "berth-config",
+ "berth-db",
+ "berth-models",
+ "berth-proto",
+ "bytes",
+ "chacha20poly1305",
+ "futures-util",
+ "gix",
+ "hyper",
+ "hyper-util",
+ "jiff",
+ "papaya",
+ "rand 0.10.2",
+ "rcgen",
+ "rmcp",
+ "rust-embed",
+ "rustls",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "toasty",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tower",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-subscriber",
+ "ts-rs",
+ "uuid",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
+name = "berth-models"
+version = "0.0.0"
+dependencies = [
+ "jiff",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "ts-rs",
+]
+
+[[package]]
+name = "berth-proto"
+version = "0.0.0"
+dependencies = [
+ "prost",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3808,126 +3928,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
-name = "oxde-agent"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "bollard",
- "bytes",
- "futures-util",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "oxde-config",
- "oxde-models",
- "oxde-proto",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-prost",
- "tracing",
- "tracing-subscriber",
- "zip",
-]
-
-[[package]]
-name = "oxde-config"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "oxde-proto",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "oxde-db"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "toasty",
- "toasty-core",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "oxde-hub"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "axum-server",
- "base64 0.23.0",
- "bytes",
- "chacha20poly1305",
- "futures-util",
- "gix",
- "hyper",
- "hyper-util",
- "jiff",
- "oxde-config",
- "oxde-db",
- "oxde-models",
- "oxde-proto",
- "papaya",
- "rand 0.10.2",
- "rcgen",
- "rmcp",
- "rust-embed",
- "rustls",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "toasty",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-prost",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-subscriber",
- "ts-rs",
- "uuid",
- "zeroize",
- "zip",
-]
-
-[[package]]
-name = "oxde-models"
-version = "0.0.0"
-dependencies = [
- "jiff",
- "schemars",
- "serde",
- "serde_json",
- "thiserror",
- "ts-rs",
-]
-
-[[package]]
-name = "oxde-proto"
-version = "0.0.0"
-dependencies = [
- "prost",
- "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
-]
-
-[[package]]
 name = "pack1"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6896,8 +6896,8 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "oxde-config",
- "oxde-db",
+ "berth-config",
+ "berth-db",
  "toasty-cli",
  "tokio",
 ]

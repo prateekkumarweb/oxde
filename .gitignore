@@ -1,4 +1,4 @@
 /target
 /local-data
-/oxde.toml
-/oxde-agent.toml
+/berth.toml
+/berth-agent.toml

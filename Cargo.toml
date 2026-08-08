@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxde-agent", "oxde-config", "oxde-db", "oxde-hub", "oxde-models", "oxde-proto", "xtask"]
+members = ["berth-agent", "berth-config", "berth-db", "berth-hub", "berth-models", "berth-proto", "xtask"]
 resolver = "3"
 
 [workspace.lints.rust]
@@ -28,10 +28,10 @@ http-body-util = "0.1.4"
 hyper = "1.11.0"
 hyper-util = "0.1.20"
 jiff = "0.2.35"
-oxde-config = { path = "oxde-config" }
-oxde-db = { path = "oxde-db" }
-oxde-models = { path = "oxde-models" }
-oxde-proto = { path = "oxde-proto" }
+berth-config = { path = "berth-config" }
+berth-db = { path = "berth-db" }
+berth-models = { path = "berth-models" }
+berth-proto = { path = "berth-proto" }
 papaya = "0.2.4"
 prost = "0.14.4"
 rand = "0.10.2"

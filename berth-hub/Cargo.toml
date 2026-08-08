@@ -1,0 +1,48 @@
+[package]
+name = "berth-hub"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+axum = { workspace = true, features = ["multipart"] }
+axum-server = { workspace = true, features = ["tls-rustls"] }
+base64.workspace = true
+bytes.workspace = true
+chacha20poly1305.workspace = true
+futures-util.workspace = true
+gix = { workspace = true, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+jiff = { workspace = true, features = ["serde"] }
+berth-db.workspace = true
+berth-models.workspace = true
+berth-proto.workspace = true
+papaya.workspace = true
+rand.workspace = true
+rcgen.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
+rust-embed = { workspace = true, features = ["mime-guess"] }
+rustls = { workspace = true, features = ["ring"] }
+schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toasty.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-stream.workspace = true
+tonic = { workspace = true, features = ["tls-ring"] }
+tonic-prost.workspace = true
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["fs", "trace", "validate-request"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+ts-rs = { workspace = true, features = ["jiff-impl"] }
+uuid = { workspace = true, features = ["v7"] }
+zeroize.workspace = true
+zip.workspace = true
+berth-config.workspace = true

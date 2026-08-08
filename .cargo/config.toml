@@ -2,5 +2,5 @@
 xtask = "run --package xtask --"
 
 [env]
-TS_RS_EXPORT_DIR = { value = "oxde-ui/src/lib/generated", relative = true }
+TS_RS_EXPORT_DIR = { value = "berth-ui/src/lib/generated", relative = true }
 TS_RS_LARGE_INT = "number"

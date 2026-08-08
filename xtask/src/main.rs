@@ -36,22 +36,22 @@ fn main() -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!("usage: cargo xtask <gen-types|build-ui|build|migration> [args...]");
-    eprintln!("  gen-types       regenerate oxde-ui/src/lib/generated from #[ts(export)] types");
+    eprintln!("  gen-types       regenerate berth-ui/src/lib/generated from #[ts(export)] types");
     eprintln!(
-        "  build-ui        gen-types, then build oxde-ui/dist via Vite+ (`vp install && vp build`)"
+        "  build-ui        gen-types, then build berth-ui/dist via Vite+ (`vp install && vp build`)"
     );
     eprintln!("  build [args]    build-ui, then `cargo build [args]`");
     eprintln!(
-        "  migration <generate --name X|apply|drop|reset|snapshot>   database schema migrations (oxde-db/toasty-cli)"
+        "  migration <generate --name X|apply|drop|reset|snapshot>   database schema migrations (berth-db/toasty-cli)"
     );
     ExitCode::FAILURE
 }
 
 /// Runs a `toasty-cli` migration subcommand against the real database, at
-/// the `data_dir` configured in `oxde.toml` (or `$OXDE_CONFIG`) - same file
-/// `oxde-hub` itself opens. `generate` only reads the schema compiled from
-/// `oxde_db::models`, so it's safe to run against that file even though
-/// it's also the real data `oxde-hub` serves from.
+/// the `data_dir` configured in `berth.toml` (or `$BERTH_CONFIG`) - same file
+/// `berth-hub` itself opens. `generate` only reads the schema compiled from
+/// `berth_db::models`, so it's safe to run against that file even though
+/// it's also the real data `berth-hub` serves from.
 fn migration(args: Vec<String>) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
@@ -73,24 +73,24 @@ fn migration(args: Vec<String>) -> ExitCode {
 async fn run_migration_cli(args: Vec<String>) -> anyhow::Result<()> {
     let data_dir = configured_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
-    let db = oxde_db::connect(&data_dir).await?;
+    let db = berth_db::connect(&data_dir).await?;
 
-    let cli_args = ["oxde".to_string(), "migration".to_string()]
+    let cli_args = ["berth".to_string(), "migration".to_string()]
         .into_iter()
         .chain(args);
     toasty_cli::ToastyCli::new(db).parse_from(cli_args).await
 }
 
 fn configured_data_dir() -> anyhow::Result<std::path::PathBuf> {
-    Ok(oxde_config::load_oxde_config()?.data_dir)
+    Ok(berth_config::load_berth_config()?.data_dir)
 }
 
 fn gen_types() -> bool {
-    // `dashboard_assets.rs`'s `RustEmbed` derive needs `oxde-ui/dist` to
+    // `dashboard_assets.rs`'s `RustEmbed` derive needs `berth-ui/dist` to
     // exist at compile time, but compiling this test target is how a fresh
     // checkout builds it for the first time - create an empty placeholder
     // so that compile can succeed before `build_ui` populates it for real.
-    let dist_dir = Path::new("oxde-ui/dist");
+    let dist_dir = Path::new("berth-ui/dist");
     if !dist_dir.exists() && std::fs::create_dir_all(dist_dir).is_err() {
         eprintln!("failed to create {}", dist_dir.display());
         return false;
@@ -98,14 +98,14 @@ fn gen_types() -> bool {
 
     run(
         "cargo",
-        &["test", "--quiet", "-p", "oxde-hub", "export_bindings"],
+        &["test", "--quiet", "-p", "berth-hub", "export_bindings"],
         &[],
         None,
     )
 }
 
 fn build_ui() -> bool {
-    let ui_dir = Path::new("oxde-ui");
+    let ui_dir = Path::new("berth-ui");
     run("vp", &["install"], &[], Some(ui_dir)) && run("vp", &["build"], &[], Some(ui_dir))
 }
 

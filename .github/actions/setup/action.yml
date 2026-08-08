@@ -1,5 +1,5 @@
 name: Setup
-description: Install protoc, the Rust toolchain, Vite+, and build the oxde-ui dashboard frontend
+description: Install protoc, the Rust toolchain, Vite+, and build the berth-ui dashboard frontend
 
 inputs:
   components:
@@ -24,11 +24,11 @@ runs:
       run: |
         curl -fsSL https://vite.plus | bash
         echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
-    - name: Cache oxde-ui dependencies
+    - name: Cache berth-ui dependencies
       uses: actions/cache@v6
       with:
-        path: oxde-ui/node_modules
-        key: oxde-ui-${{ runner.os }}-${{ hashFiles('oxde-ui/pnpm-lock.yaml') }}
+        path: berth-ui/node_modules
+        key: berth-ui-${{ runner.os }}-${{ hashFiles('berth-ui/pnpm-lock.yaml') }}
     - name: Build dashboard frontend
       shell: bash
       run: cargo xtask build-ui

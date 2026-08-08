@@ -65,10 +65,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Lint oxde-proto
+      - name: Lint berth-proto
         uses: bufbuild/buf-action@v1
         with:
-          input: oxde-proto
+          input: berth-proto
           lint: true
           format: false
           breaking: false

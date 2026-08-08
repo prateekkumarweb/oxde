@@ -1,0 +1,12 @@
+[package]
+name = "berth-config"
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+berth-proto.workspace = true
+serde.workspace = true
+toml.workspace = true
